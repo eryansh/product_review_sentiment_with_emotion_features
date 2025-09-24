@@ -151,8 +151,12 @@ if models and emotion_classifier:
                     df_proba = pd.DataFrame({'Sentiment': nb_model.classes_, 'Probability': prediction_proba[0]})
                     df_proba['Probability'] = df_proba['Probability'] * 100
 
+                    # MODIFIED: Define fixed order and sort the dataframe
+                    sentiment_order = ['Negative', 'Neutral', 'Positive']
+                    df_proba = df_proba.set_index('Sentiment').reindex(sentiment_order).reset_index()
+
                     fig_sentiment1 = go.Figure()
-                    for index, row in df_proba.sort_values('Probability', ascending=True).iterrows():
+                    for index, row in df_proba.iterrows():
                         sentiment = row['Sentiment']
                         fig_sentiment1.add_trace(go.Bar(y=[sentiment.capitalize()], x=[row['Probability']], name=sentiment.capitalize(), orientation='h', marker_color=sentiment_color_map.get(sentiment, '#888')))
                     fig_sentiment1.update_layout(showlegend=False, height=180, margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(range=[0, 100], showgrid=False), yaxis=dict(showgrid=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#fff"))
@@ -163,8 +167,11 @@ if models and emotion_classifier:
                     df_proba_emo = pd.DataFrame({'Sentiment': nb_model_emo.classes_, 'Probability': prediction_proba_emo[0]})
                     df_proba_emo['Probability'] = df_proba_emo['Probability'] * 100
                     
+                    # MODIFIED: Define fixed order and sort the dataframe
+                    df_proba_emo = df_proba_emo.set_index('Sentiment').reindex(sentiment_order).reset_index()
+                    
                     fig_sentiment2 = go.Figure()
-                    for index, row in df_proba_emo.sort_values('Probability', ascending=True).iterrows():
+                    for index, row in df_proba_emo.iterrows():
                         sentiment = row['Sentiment']
                         fig_sentiment2.add_trace(go.Bar(y=[sentiment.capitalize()], x=[row['Probability']], name=sentiment.capitalize(), orientation='h', marker_color=sentiment_color_map.get(sentiment, '#888')))
                     fig_sentiment2.update_layout(showlegend=False, height=180, margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(range=[0, 100], showgrid=False), yaxis=dict(showgrid=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#fff"))
