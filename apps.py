@@ -80,13 +80,14 @@ if models and emotion_classifier:
             prediction_proba = nb_model.predict_proba(text_chi2)
             confidence = np.max(prediction_proba)
             predicted_label = nb_model.classes_[np.argmax(prediction_proba)]
+            # NEW: Check for uncertainty (when probabilities are equal)
+            is_uncertain1 = np.isclose(confidence, 1/3)
 
             # Model 2
             tfidf_emo, selector_emo, nb_model_emo = models["with_emotion"]
             emotion_scores_raw = emotion_classifier(user_text)[0]
             labels = ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"]
             scores_dict = {item['label']: item['score'] for item in emotion_scores_raw}
-            # CORRECTED: Typo --1 changed to -1
             emotion_features = np.array([scores_dict[l] for l in labels]).reshape(1, -1)
             text_tfidf_emo = tfidf_emo.transform([user_text])
             text_chi2_emo = selector_emo.transform(text_tfidf_emo)
@@ -95,6 +96,9 @@ if models and emotion_classifier:
             confidence_emo = np.max(prediction_proba_emo)
             predicted_class_index_emo = np.argmax(prediction_proba_emo)
             predicted_label_emo = nb_model_emo.classes_[predicted_class_index_emo]
+            # NEW: Check for uncertainty in Model 2
+            is_uncertain2 = np.isclose(confidence_emo, 1/3)
+            
             confidence_from_model1 = prediction_proba[0][predicted_class_index_emo]
             confidence_delta = confidence_emo - confidence_from_model1
             df_scores = pd.DataFrame(emotion_scores_raw)
@@ -105,14 +109,18 @@ if models and emotion_classifier:
             
             # Build interpretation text
             interpretation_text = ""
-            if predicted_label.lower() != predicted_label_emo.lower():
+            if is_uncertain1 or is_uncertain2:
+                interpretation_text = "The model is **uncertain** because the input text is too short or contains words not in its vocabulary. Please provide a more complete sentence."
+            elif predicted_label.lower() != predicted_label_emo.lower():
                 interpretation_text += f"These models **disagree**. Model 1 predicts **{predicted_label.capitalize()}**, while Model 2 predicts **{predicted_label_emo.capitalize()}**. "
             else:
                 interpretation_text += f"Both models **agree** that the sentiment is **{predicted_label.capitalize()}**. "
-            if top_emotion not in ['neutral']:
-                interpretation_text += f"The detection of strong **{top_emotion.capitalize()}** emotion likely influenced Model 2, leading to higher confidence and a more nuanced prediction."
-            else:
-                interpretation_text += f"This text was detected as emotionally **Neutral**. This helps Model 2 reduce any bias and produce a more balanced sentiment prediction."
+            
+            if not (is_uncertain1 or is_uncertain2):
+                if top_emotion not in ['neutral']:
+                    interpretation_text += f"The detection of strong **{top_emotion.capitalize()}** emotion likely influenced Model 2, leading to higher confidence and a more nuanced prediction."
+                else:
+                    interpretation_text += f"This text was detected as emotionally **Neutral**. This helps Model 2 reduce any bias and produce a more balanced sentiment prediction."
 
             # --- DISPLAY RESULTS IN COLUMNS ---
             col1, col2 = st.columns(2)
@@ -121,14 +129,16 @@ if models and emotion_classifier:
             with col1:
                 st.markdown("#### Model 1: Without Emotion Features")
                 
-                if str(predicted_label).lower() == 'positive':
+                # NEW: Handle uncertain case
+                if is_uncertain1:
+                    st.warning("Model is uncertain due to unrecognized input.")
+                elif str(predicted_label).lower() == 'positive':
                     st.success(f"**Positive** (Confidence: {confidence:.2%})")
                 elif str(predicted_label).lower() == 'negative':
                     st.error(f"**Negative** (Confidence: {confidence:.2%})")
                 else:
                     st.info(f"**Neutral** (Confidence: {confidence:.2%})")
                 
-                # MODIFIED: Replace chart with interpretation
                 st.markdown("###### Interpretation of Results")
                 st.info(interpretation_text)
 
@@ -136,19 +146,24 @@ if models and emotion_classifier:
             with col2:
                 st.markdown("#### Model 2: With Emotion Features")
                 
-                if str(predicted_label_emo).lower() == 'positive':
+                # NEW: Handle uncertain case
+                if is_uncertain2:
+                    st.warning("Model is uncertain due to unrecognized input.")
+                elif str(predicted_label_emo).lower() == 'positive':
                     st.success(f"**Positive** (Confidence: {confidence_emo:.2%})")
                 elif str(predicted_label_emo).lower() == 'negative':
                     st.error(f"**Negative** (Confidence: {confidence_emo:.2%})")
                 else:
                     st.info(f"**Neutral** (Confidence: {confidence_emo:.2%})")
                 
-                st.metric(
-                    label="Confidence Increase",
-                    value=f"{confidence_emo:.2%}",
-                    delta=f"{confidence_delta:.2%}",
-                    help="Difference in confidence for this sentiment compared to the model without emotion features."
-                )
+                # Only show metric if not uncertain
+                if not is_uncertain2:
+                    st.metric(
+                        label="Confidence Increase",
+                        value=f"{confidence_emo:.2%}",
+                        delta=f"{confidence_delta:.2%}",
+                        help="Difference in confidence for this sentiment compared to the model without emotion features."
+                    )
                 
                 st.markdown("###### Emotion Analysis (Input Feature)")
                 
