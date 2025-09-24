@@ -89,22 +89,27 @@ if tfidf and selector and nb_model and emotion_classifier:
             predicted_class_index = np.argmax(prediction_proba)
             predicted_label = nb_model.classes_[predicted_class_index]
 
-            # DIUBAH SUAI: Tentukan sentimen untuk 3 kelas
-            # Annnggap label adalah: 1 untuk Positif, 0 untuk Neutral, -1 untuk Negatif
+            # DIBETULKAN: Gunakan logik pemetaan yang lebih jelas dan selamat
+            # Ini memastikan setiap label diperiksa secara spesifik
             if predicted_label == 1:
                 sentiment_label = "Positif"
             elif predicted_label == 0:
                 sentiment_label = "Neutral"
-            else:
+            elif predicted_label == -1:
                 sentiment_label = "Negatif"
+            else:
+                sentiment_label = "Tidak Diketahui" # Untuk kes jika label yang diramal tidak dijangka
 
             # DIUBAH SUAI: Paparkan keputusan akhir untuk 3 kelas
             if sentiment_label == "Positif":
                 st.success(f"**Sentimen Diramalkan:** {sentiment_label} (Keyakinan: {confidence:.2%})")
             elif sentiment_label == "Negatif":
                 st.error(f"**Sentimen Diramalkan:** {sentiment_label} (Keyakinan: {confidence:.2%})")
-            else: # Untuk Neutral
+            elif sentiment_label == "Neutral":
                 st.info(f"**Sentimen Diramalkan:** {sentiment_label} (Keyakinan: {confidence:.2%})")
+            else:
+                st.warning(f"Gagal meramal sentimen. Label tidak dikenali: {predicted_label}")
+
 
             # Paparkan analisis emosi yang digunakan sebagai ciri
             with st.expander("Lihat Analisis Emosi Terperinci"):
