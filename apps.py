@@ -89,26 +89,21 @@ if tfidf and selector and nb_model and emotion_classifier:
             predicted_class_index = np.argmax(prediction_proba)
             predicted_label = nb_model.classes_[predicted_class_index]
 
-            # DIBETULKAN: Gunakan logik pemetaan yang lebih jelas dan selamat
-            # Ini memastikan setiap label diperiksa secara spesifik
-            if predicted_label == 1:
-                sentiment_label = "Positif"
-            elif predicted_label == 0:
-                sentiment_label = "Neutral"
-            elif predicted_label == -1:
-                sentiment_label = "Negatif"
-            else:
-                sentiment_label = "Tidak Diketahui" # Untuk kes jika label yang diramal tidak dijangka
+            # DIBETULKAN: Gunakan label string sebenar dari model untuk logik paparan
+            # Model anda mengembalikan label seperti "Positive", "Negative", "Neutral"
+            predicted_label_str = str(predicted_label)
 
-            # DIUBAH SUAI: Paparkan keputusan akhir untuk 3 kelas
-            if sentiment_label == "Positif":
-                st.success(f"**Sentimen Diramalkan:** {sentiment_label} (Keyakinan: {confidence:.2%})")
-            elif sentiment_label == "Negatif":
-                st.error(f"**Sentimen Diramalkan:** {sentiment_label} (Keyakinan: {confidence:.2%})")
-            elif sentiment_label == "Neutral":
-                st.info(f"**Sentimen Diramalkan:** {sentiment_label} (Keyakinan: {confidence:.2%})")
+            if predicted_label_str.lower() == 'positive':
+                sentiment_label_display = "Positif"
+                st.success(f"**Sentimen Diramalkan:** {sentiment_label_display} (Keyakinan: {confidence:.2%})")
+            elif predicted_label_str.lower() == 'negative':
+                sentiment_label_display = "Negatif"
+                st.error(f"**Sentimen Diramalkan:** {sentiment_label_display} (Keyakinan: {confidence:.2%})")
+            elif predicted_label_str.lower() == 'neutral':
+                sentiment_label_display = "Neutral"
+                st.info(f"**Sentimen Diramalkan:** {sentiment_label_display} (Keyakinan: {confidence:.2%})")
             else:
-                st.warning(f"Gagal meramal sentimen. Label tidak dikenali: {predicted_label}")
+                st.warning(f"Gagal meramal sentimen. Label tidak dikenali: {predicted_label_str}")
 
 
             # Paparkan analisis emosi yang digunakan sebagai ciri
