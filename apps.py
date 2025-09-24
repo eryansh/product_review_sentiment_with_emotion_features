@@ -1,93 +1,108 @@
 import streamlit as st
+import joblib
 import pandas as pd
+from scipy.sparse import hstack
+import numpy as np
 from transformers import pipeline
 
-# --- Page Configuration ---
+# --- Konfigurasi Halaman ---
 st.set_page_config(
-    page_title="Emotion Detector App",
-    page_icon="😊",
+    page_title="Sentiment Analysis App",
+    page_icon="🤖",
     layout="centered",
-    initial_sidebar_state="auto",
 )
 
-# --- Model Loading ---
-# Use st.cache_resource to load the model only once and cache it for subsequent runs.
-# This hugely improves performance.
+# --- Memuatkan Aset Pipeline Anda ---
+# Guna st.cache_resource untuk memuatkan model sekali sahaja
+@st.cache_resource
+def load_your_pipeline():
+    """Memuatkan komponen pipeline Naive Bayes yang telah anda latih."""
+    try:
+        # DIUBAH SUAI: Laluan fail kini menunjuk ke direktori utama (root)
+        tfidf_vectorizer = joblib.load('tfidf_vectorizer.joblib')
+        chi2_selector = joblib.load('chi2_selector.joblib')
+        naive_bayes_model = joblib.load('naive_bayes_model.joblib')
+        return tfidf_vectorizer, chi2_selector, naive_bayes_model
+    except FileNotFoundError:
+        # DIUBAH SUAI: Mesej ralat dikemaskini
+        st.error("Ralat: Pastikan fail 'tfidf_vectorizer.joblib', 'chi2_selector.joblib', dan 'naive_bayes_model.joblib' berada di direktori utama repositori anda.")
+        return None, None, None
+    except Exception as e:
+        st.error(f"Ralat semasa memuatkan model anda: {e}")
+        return None, None, None
+
+# --- Memuatkan Model Emosi (untuk Penjanaan Ciri) ---
 @st.cache_resource
 def load_emotion_model():
-    """Loads the emotion detection model from Hugging Face."""
+    """Memuatkan model pengesan emosi dari Hugging Face."""
     try:
-        # Using the specified model for emotion classification
         emotion_classifier = pipeline(
             "text-classification",
             model="j-hartmann/emotion-english-distilroberta-base",
-            return_all_scores=True # Set to True to get scores for all emotions
+            return_all_scores=True
         )
         return emotion_classifier
     except Exception as e:
-        # If the model fails to load, display an error message.
-        st.error(f"Error loading the model: {e}")
+        st.error(f"Ralat memuatkan model emosi: {e}")
         return None
 
-# --- UI Layout and Logic ---
+# --- UI dan Logik ---
+st.title("🤖 Analisis Sentimen Ulasan Produk")
+st.markdown("Masukkan teks ulasan produk, dan aplikasi ini akan menganalisis emosi serta meramalkan sentimen (Positif/Negatif) menggunakan model Naive Bayes yang telah dilatih.")
 
-# Title and Subheader
-st.title("😊 Emotion Detector")
-st.markdown("Enter any text below, and the app will analyze the underlying emotion using a pre-trained AI model.")
+# Memuatkan semua model yang diperlukan
+with st.spinner("Memuatkan model AI, sila tunggu..."):
+    tfidf, selector, nb_model = load_your_pipeline()
+    emotion_classifier = load_emotion_model()
 
-# Load the model and show a spinner while it's loading.
-with st.spinner("Loading AI model, please wait..."):
-    classifier = load_emotion_model()
+if tfidf and selector and nb_model and emotion_classifier:
+    with st.form("sentiment_form"):
+        user_text = st.text_area("Masukkan teks ulasan di sini:", "The battery life of this phone is amazing, I'm so happy with my purchase!", height=150)
+        submitted = st.form_submit_button("Analisis Teks")
 
-if classifier:
-    # Create a form for user input to prevent the app from rerunning on every key press
-    with st.form("emotion_form"):
-        # Text area for user input
-        user_text = st.text_area("Enter your text here:", "I am feeling incredibly happy and excited about this new project!", height=150)
-        # Submit button for the form
-        submitted = st.form_submit_button("Analyze Emotion")
-
-    # --- Processing and Displaying Results ---
     if submitted and user_text:
         st.divider()
-        st.subheader("Analysis Results")
+        st.subheader("Keputusan Analisis")
 
-        # Show a spinner while the model is processing the text
-        with st.spinner("Analyzing text..."):
-            # Get predictions from the model
-            # The model returns a list containing a dictionary of emotions and their scores
-            prediction = classifier(user_text)
+        with st.spinner("Menganalisis teks..."):
+            # === LANGKAH 1: Dapatkan Ciri Emosi dari model Hugging Face ===
+            emotion_scores_raw = emotion_classifier(user_text)[0]
+            
+            # Susun skor mengikut urutan yang sama seperti semasa latihan
+            emotion_labels_ordered = ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"]
+            scores_dict = {item['label']: item['score'] for item in emotion_scores_raw}
+            emotion_features = np.array([scores_dict[label] for label in emotion_labels_ordered]).reshape(1, -1)
 
-            if prediction:
-                # Extract the list of scores from the nested structure
-                scores = prediction[0]
+            # === LANGKAH 2: Proses Ciri Teks menggunakan pipeline anda ===
+            text_tfidf = tfidf.transform([user_text])
+            text_chi2 = selector.transform(text_tfidf)
 
-                # Convert the list of dictionaries to a pandas DataFrame for easier handling
-                df_scores = pd.DataFrame(scores)
-                # Rename columns for clarity
-                df_scores.rename(columns={'label': 'Emotion', 'score': 'Confidence'}, inplace=True)
-                # Find the emotion with the highest confidence score
-                top_emotion = df_scores.loc[df_scores['Confidence'].idxmax()]
+            # === LANGKAH 3: Gabungkan Ciri Teks dan Emosi ===
+            final_features = hstack([text_chi2, emotion_features])
 
-                # Display the top emotion with a success message
-                st.success(f"**Top Emotion Detected:** {top_emotion['Emotion'].capitalize()} (Confidence: {top_emotion['Confidence']:.2%})")
+            # === LANGKAH 4: Buat Ramalan Sentimen ===
+            prediction = nb_model.predict(final_features)
+            prediction_proba = nb_model.predict_proba(final_features)
 
-                # Display a bar chart of all emotion scores
-                st.write("Full Emotion Analysis:")
+            # Tentukan sentimen berdasarkan ramalan (anda mungkin perlu sahkan label ini)
+            sentiment_label = "Positif" if prediction[0] == 1 else "Negatif"
+            confidence = prediction_proba[0][prediction[0]]
 
-                # Create a bar chart from the dataframe, setting the emotion as the index
-                chart = st.bar_chart(df_scores.set_index('Emotion'))
-
-                # Display the scores in a table as well
-                st.write("Confidence Scores:")
-                st.dataframe(df_scores, use_container_width=True)
+            # Paparkan keputusan akhir
+            if sentiment_label == "Positif":
+                st.success(f"**Sentimen Diramalkan:** {sentiment_label} (Keyakinan: {confidence:.2%})")
             else:
-                st.error("Could not analyze the text. Please try again.")
+                st.error(f"**Sentimen Diramalkan:** {sentiment_label} (Keyakinan: {confidence:.2%})")
+
+            # Paparkan analisis emosi yang digunakan sebagai ciri
+            with st.expander("Lihat Analisis Emosi Terperinci"):
+                df_scores = pd.DataFrame(emotion_scores_raw)
+                df_scores.rename(columns={'label': 'Emosi', 'score': 'Skor Keyakinan'}, inplace=True)
+                st.bar_chart(df_scores.set_index('Emosi'))
+                st.dataframe(df_scores, use_container_width=True)
 
     elif submitted and not user_text:
-        # Show a warning if the user clicks submit with no text
-        st.warning("Please enter some text to analyze.")
-
+        st.warning("Sila masukkan teks untuk dianalisis.")
 else:
-    # Message if the model could not be loaded
-    st.error("The application could not start because the AI model failed to load. Please check your internet connection or try again later.")
+    st.error("Aplikasi tidak dapat dimulakan kerana model gagal dimuatkan. Sila semak fail model anda dan sambungan internet.")
+
