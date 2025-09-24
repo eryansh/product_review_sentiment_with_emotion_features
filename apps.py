@@ -80,7 +80,6 @@ if models and emotion_classifier:
             prediction_proba = nb_model.predict_proba(text_chi2)
             confidence = np.max(prediction_proba)
             predicted_label = nb_model.classes_[np.argmax(prediction_proba)]
-            # NEW: Check for uncertainty (when probabilities are equal)
             is_uncertain1 = np.isclose(confidence, 1/3)
 
             # Model 2
@@ -96,7 +95,6 @@ if models and emotion_classifier:
             confidence_emo = np.max(prediction_proba_emo)
             predicted_class_index_emo = np.argmax(prediction_proba_emo)
             predicted_label_emo = nb_model_emo.classes_[predicted_class_index_emo]
-            # NEW: Check for uncertainty in Model 2
             is_uncertain2 = np.isclose(confidence_emo, 1/3)
             
             confidence_from_model1 = prediction_proba[0][predicted_class_index_emo]
@@ -129,7 +127,6 @@ if models and emotion_classifier:
             with col1:
                 st.markdown("#### Model 1: Without Emotion Features")
                 
-                # NEW: Handle uncertain case
                 if is_uncertain1:
                     st.warning("Model is uncertain due to unrecognized input.")
                 elif str(predicted_label).lower() == 'positive':
@@ -139,6 +136,41 @@ if models and emotion_classifier:
                 else:
                     st.info(f"**Neutral** (Confidence: {confidence:.2%})")
                 
+                # DIUBAH SUAI: Bahagian baharu untuk perbandingan kebarangkalian
+                st.markdown("###### Sentiment Probability Comparison")
+                
+                prob_col1, prob_col2 = st.columns(2)
+                
+                sentiment_color_map = {
+                    'Positive': '#22c55e', # Green
+                    'Negative': '#ef4444', # Red
+                    'Neutral': '#a1a1aa'  # Gray
+                }
+                
+                with prob_col1:
+                    st.markdown("<p style='text-align: center;'>Without Emotion</p>", unsafe_allow_html=True)
+                    df_proba = pd.DataFrame({'Sentiment': nb_model.classes_, 'Probability': prediction_proba[0]})
+                    df_proba['Probability'] = df_proba['Probability'] * 100
+
+                    fig_sentiment1 = go.Figure()
+                    for index, row in df_proba.sort_values('Probability', ascending=True).iterrows():
+                        sentiment = row['Sentiment']
+                        fig_sentiment1.add_trace(go.Bar(y=[sentiment.capitalize()], x=[row['Probability']], name=sentiment.capitalize(), orientation='h', marker_color=sentiment_color_map.get(sentiment, '#888')))
+                    fig_sentiment1.update_layout(showlegend=False, height=180, margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(range=[0, 100], showgrid=False), yaxis=dict(showgrid=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#fff"))
+                    st.plotly_chart(fig_sentiment1, use_container_width=True)
+
+                with prob_col2:
+                    st.markdown("<p style='text-align: center;'>With Emotion</p>", unsafe_allow_html=True)
+                    df_proba_emo = pd.DataFrame({'Sentiment': nb_model_emo.classes_, 'Probability': prediction_proba_emo[0]})
+                    df_proba_emo['Probability'] = df_proba_emo['Probability'] * 100
+                    
+                    fig_sentiment2 = go.Figure()
+                    for index, row in df_proba_emo.sort_values('Probability', ascending=True).iterrows():
+                        sentiment = row['Sentiment']
+                        fig_sentiment2.add_trace(go.Bar(y=[sentiment.capitalize()], x=[row['Probability']], name=sentiment.capitalize(), orientation='h', marker_color=sentiment_color_map.get(sentiment, '#888')))
+                    fig_sentiment2.update_layout(showlegend=False, height=180, margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(range=[0, 100], showgrid=False), yaxis=dict(showgrid=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#fff"))
+                    st.plotly_chart(fig_sentiment2, use_container_width=True)
+
                 st.markdown("###### Interpretation of Results")
                 st.info(interpretation_text)
 
@@ -146,7 +178,6 @@ if models and emotion_classifier:
             with col2:
                 st.markdown("#### Model 2: With Emotion Features")
                 
-                # NEW: Handle uncertain case
                 if is_uncertain2:
                     st.warning("Model is uncertain due to unrecognized input.")
                 elif str(predicted_label_emo).lower() == 'positive':
@@ -156,7 +187,6 @@ if models and emotion_classifier:
                 else:
                     st.info(f"**Neutral** (Confidence: {confidence_emo:.2%})")
                 
-                # Only show metric if not uncertain
                 if not is_uncertain2:
                     st.metric(
                         label="Confidence Increase",
