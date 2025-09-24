@@ -94,9 +94,8 @@ if models and emotion_classifier:
                     st.info(f"**Neutral** (Keyakinan: {confidence:.2%})")
                 
                 st.markdown("###### Pecahan Sentimen")
-                # DIUBAH SUAI: Menggunakan Plotly untuk carta sentimen
                 df_proba = pd.DataFrame({'Sentimen': nb_model.classes_, 'Kebarangkalian': prediction_proba[0]})
-                df_proba['Kebarangkalian'] = df_proba['Kebarangkalian'] * 100 # Tukar kepada peratusan
+                df_proba['Kebarangkalian'] = df_proba['Kebarangkalian'] * 100
 
                 sentiment_color_map = {
                     'Positive': '#22c55e', # Hijau
@@ -153,10 +152,37 @@ if models and emotion_classifier:
                 else:
                     st.info(f"**Neutral** (Keyakinan: {confidence_emo:.2%})")
                 
-                # DIUBAH SUAI: Visualisasi Emosi Gaya Baharu
+                # DIUBAH SUAI: Carta bar sentimen ditambah untuk Model 2
+                st.markdown("###### Pecahan Sentimen")
+                df_proba_emo = pd.DataFrame({'Sentimen': nb_model_emo.classes_, 'Kebarangkalian': prediction_proba_emo[0]})
+                df_proba_emo['Kebarangkalian'] = df_proba_emo['Kebarangkalian'] * 100
+
+                fig_sentiment_emo = go.Figure()
+                for index, row in df_proba_emo.sort_values('Kebarangkalian', ascending=True).iterrows():
+                    sentiment = row['Sentimen']
+                    fig_sentiment_emo.add_trace(go.Bar(
+                        y=[sentiment.capitalize()],
+                        x=[row['Kebarangkalian']],
+                        name=sentiment.capitalize(),
+                        orientation='h',
+                        marker_color=sentiment_color_map.get(sentiment, '#888')
+                    ))
+
+                fig_sentiment_emo.update_layout(
+                    showlegend=False,
+                    height=150, # Ketinggian dilaraskan
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    xaxis=dict(range=[0, 100], showgrid=False, title="Kebarangkalian (%)"),
+                    yaxis=dict(showgrid=False),
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color="#fff")
+                )
+                st.plotly_chart(fig_sentiment_emo, use_container_width=True)
+
+
                 st.markdown("###### Analisis Emosi (Ciri Input)")
                 
-                # Peta Emosi ke Emoji dan Warna
                 emotion_map = {
                     'sadness': {'emoji': '😢', 'color': '#3b82f6'},
                     'joy': {'emoji': '😂', 'color': '#facc15'},
@@ -169,21 +195,20 @@ if models and emotion_classifier:
 
                 df_scores = pd.DataFrame(emotion_scores_raw)
                 df_scores.rename(columns={'label': 'Emotion', 'score': 'Score'}, inplace=True)
-                df_scores['Score'] = df_scores['Score'] * 100 # Tukar kepada peratusan
+                df_scores['Score'] = df_scores['Score'] * 100
                 top_emotion_data = df_scores.loc[df_scores['Score'].idxmax()]
                 top_emotion = top_emotion_data['Emotion']
 
-                sub_col1, sub_col2 = st.columns([1, 2])
+                sub_col1, sub_col2 = st.columns([1, 3]) # Nisbah dilaraskan
 
                 with sub_col1:
-                    st.markdown(f"<div style='text-align: center;'><p style='font-size: 4rem; margin-bottom: 0;'>{emotion_map.get(top_emotion,{}).get('emoji','❓')}</p><p style='font-weight: bold;'>{top_emotion.capitalize()}</p></div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='text-align: center;'><p style='font-size: 3rem; margin-bottom: 0;'>{emotion_map.get(top_emotion,{}).get('emoji','❓')}</p><p style='font-weight: bold;'>{top_emotion.capitalize()}</p></div>", unsafe_allow_html=True)
 
                 with sub_col2:
-                    # Cipta carta bar mendatar dengan Plotly
-                    fig = go.Figure()
+                    fig_emotion = go.Figure()
                     for index, row in df_scores.sort_values('Score', ascending=True).iterrows():
                         emotion = row['Emotion']
-                        fig.add_trace(go.Bar(
+                        fig_emotion.add_trace(go.Bar(
                             y=[emotion.capitalize()],
                             x=[row['Score']],
                             name=emotion.capitalize(),
@@ -191,10 +216,9 @@ if models and emotion_classifier:
                             marker_color=emotion_map.get(emotion, {}).get('color', '#888')
                         ))
                     
-                    fig.update_layout(
-                        barmode='stack',
+                    fig_emotion.update_layout(
                         showlegend=False,
-                        height=220,
+                        height=150, # Ketinggian dilaraskan
                         margin=dict(l=10, r=10, t=10, b=10),
                         xaxis=dict(range=[0, 100], showgrid=False, title="Skor (%)"),
                         yaxis=dict(showgrid=False),
@@ -202,7 +226,7 @@ if models and emotion_classifier:
                         plot_bgcolor='rgba(0,0,0,0)',
                         font=dict(color="#fff")
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig_emotion, use_container_width=True)
 
 
     elif submitted and not user_text:
