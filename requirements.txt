@@ -5,3 +5,4 @@ scipy
 joblib
 transformers
 torch
+plotly
