@@ -65,13 +65,12 @@ with st.spinner("Memuatkan model AI, sila tunggu..."):
 
 if models and emotion_classifier:
     with st.form("sentiment_form"):
-        user_text = st.text_area("Masukkan teks ulasan di sini:", "The battery life of this phone is amazing, I'm so happy with my purchase!", height=150)
+        # DIUBAH SUAI: Ketinggian text_area dikurangkan
+        user_text = st.text_area("Masukkan teks ulasan di sini:", "The battery life of this phone is amazing, I'm so happy with my purchase!", height=100)
         submitted = st.form_submit_button("Bandingkan Analisis")
 
     if submitted and user_text:
-        st.divider()
-        st.subheader("Keputusan Analisis Perbandingan")
-
+        # DIUBAH SUAI: Divider dan subheader dibuang untuk menjimatkan ruang
         with st.spinner("Menganalisis teks..."):
             
             # === Sediakan kolum untuk perbandingan ===
@@ -99,7 +98,8 @@ if models and emotion_classifier:
                 df_proba = pd.DataFrame({'Sentimen': nb_model.classes_, 'Kebarangkalian': prediction_proba[0]})
                 sentiment_map = {'Positive': 'Positif', 'Negative': 'Negatif', 'Neutral': 'Neutral'}
                 df_proba['Sentimen'] = df_proba['Sentimen'].map(sentiment_map).fillna(df_proba['Sentimen'])
-                st.bar_chart(df_proba.set_index('Sentimen'))
+                # DIUBAH SUAI: Ketinggian carta ditetapkan
+                st.bar_chart(df_proba.set_index('Sentimen'), height=200)
 
             # --- PREDIKSI DENGAN EMOSI (KOLUM 2) ---
             with col2:
@@ -128,10 +128,11 @@ if models and emotion_classifier:
 
                 df_proba_emo = pd.DataFrame({'Sentimen': nb_model_emo.classes_, 'Kebarangkalian': prediction_proba_emo[0]})
                 df_proba_emo['Sentimen'] = df_proba_emo['Sentimen'].map(sentiment_map).fillna(df_proba_emo['Sentimen'])
-                st.bar_chart(df_proba_emo.set_index('Sentimen'))
+                # DIUBAH SUAI: Ketinggian carta ditetapkan
+                st.bar_chart(df_proba_emo.set_index('Sentimen'), height=200)
 
             # --- Paparan Analisis Emosi (di bawah kolum) ---
-            st.divider()
+            # DIUBAH SUAI: Divider dibuang
             with st.expander("Lihat Analisis Emosi Terperinci (Digunakan oleh Model 2)"):
                 df_scores = pd.DataFrame(emotion_scores_raw)
                 df_scores.rename(columns={'label': 'Emosi', 'score': 'Skor Keyakinan'}, inplace=True)
