@@ -1,5 +1,7 @@
 streamlit
+scikit-learn
 pandas
+scipy
+joblib
 transformers
 torch
-scikit-learn==1.0.2
