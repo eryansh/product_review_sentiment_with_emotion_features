@@ -92,6 +92,7 @@ if models and emotion_classifier:
                 else:
                     st.info(f"**Neutral** (Keyakinan: {confidence:.2%})")
                 
+                st.markdown("###### Pecahan Sentimen")
                 df_proba = pd.DataFrame({'Sentimen': nb_model.classes_, 'Kebarangkalian': prediction_proba[0]})
                 sentiment_map = {'Positive': 'Positif', 'Negative': 'Negatif', 'Neutral': 'Neutral'}
                 df_proba['Sentimen'] = df_proba['Sentimen'].map(sentiment_map).fillna(df_proba['Sentimen'])
@@ -122,15 +123,20 @@ if models and emotion_classifier:
                 else:
                     st.info(f"**Neutral** (Keyakinan: {confidence_emo:.2%})")
 
-                df_proba_emo = pd.DataFrame({'Sentimen': nb_model_emo.classes_, 'Kebarangkalian': prediction_proba_emo[0]})
-                df_proba_emo['Sentimen'] = df_proba_emo['Sentimen'].map(sentiment_map).fillna(df_proba_emo['Sentimen'])
-                st.bar_chart(df_proba_emo.set_index('Sentimen'), height=200)
+                # DIUBAH SUAI: Cipta kolum bersarang untuk carta
+                sub_col1, sub_col2 = st.columns(2)
 
-                # DIUBAH SUAI: Carta emosi kini berada di dalam kolum ini
-                st.markdown("###### Analisis Emosi (Ciri Input)")
-                df_scores = pd.DataFrame(emotion_scores_raw)
-                df_scores.rename(columns={'label': 'Emosi', 'score': 'Skor'}, inplace=True)
-                st.bar_chart(df_scores.set_index('Emosi'), height=180)
+                with sub_col1:
+                    st.markdown("###### Pecahan Sentimen")
+                    df_proba_emo = pd.DataFrame({'Sentimen': nb_model_emo.classes_, 'Kebarangkalian': prediction_proba_emo[0]})
+                    df_proba_emo['Sentimen'] = df_proba_emo['Sentimen'].map(sentiment_map).fillna(df_proba_emo['Sentimen'])
+                    st.bar_chart(df_proba_emo.set_index('Sentimen'), height=200)
+                
+                with sub_col2:
+                    st.markdown("###### Analisis Emosi (Input)")
+                    df_scores = pd.DataFrame(emotion_scores_raw)
+                    df_scores.rename(columns={'label': 'Emosi', 'score': 'Skor'}, inplace=True)
+                    st.bar_chart(df_scores.set_index('Emosi'), height=200)
 
 
     elif submitted and not user_text:
