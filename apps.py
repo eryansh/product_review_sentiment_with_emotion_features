@@ -18,14 +18,14 @@ st.set_page_config(
 def load_your_pipeline():
     """Memuatkan komponen pipeline Naive Bayes yang telah anda latih."""
     try:
-        # DIUBAH SUAI: Laluan fail kini menunjuk ke direktori utama (root)
-        tfidf_vectorizer = joblib.load('tfidf_vectorizer.joblib')
-        chi2_selector = joblib.load('chi2_selector.joblib')
-        naive_bayes_model = joblib.load('naive_bayes_model.joblib')
+        # DIUBAH SUAI: Memuatkan set model yang betul (_emo)
+        tfidf_vectorizer = joblib.load('tfidf_vectorizer_emo.joblib')
+        chi2_selector = joblib.load('chi2_selector_emo.joblib')
+        naive_bayes_model = joblib.load('naive_bayes_model_emo.joblib')
         return tfidf_vectorizer, chi2_selector, naive_bayes_model
     except FileNotFoundError:
         # DIUBAH SUAI: Mesej ralat dikemaskini
-        st.error("Ralat: Pastikan fail 'tfidf_vectorizer.joblib', 'chi2_selector.joblib', dan 'naive_bayes_model.joblib' berada di direktori utama repositori anda.")
+        st.error("Ralat: Pastikan fail 'tfidf_vectorizer_emo.joblib', 'chi2_selector_emo.joblib', dan 'naive_bayes_model_emo.joblib' berada di direktori utama repositori anda.")
         return None, None, None
     except Exception as e:
         st.error(f"Ralat semasa memuatkan model anda: {e}")
