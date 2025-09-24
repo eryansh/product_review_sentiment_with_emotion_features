@@ -136,7 +136,6 @@ if models and emotion_classifier:
                 else:
                     st.info(f"**Neutral** (Confidence: {confidence:.2%})")
                 
-                # DIUBAH SUAI: Bahagian baharu untuk perbandingan kebarangkalian
                 st.markdown("###### Sentiment Probability Comparison")
                 
                 prob_col1, prob_col2 = st.columns(2)
@@ -187,12 +186,12 @@ if models and emotion_classifier:
                 else:
                     st.info(f"**Neutral** (Confidence: {confidence_emo:.2%})")
                 
+                # DIUBAH SUAI: Metrik kini lebih fokus kepada impak
                 if not is_uncertain2:
                     st.metric(
-                        label="Confidence Increase",
-                        value=f"{confidence_emo:.2%}",
-                        delta=f"{confidence_delta:.2%}",
-                        help="Difference in confidence for this sentiment compared to the model without emotion features."
+                        label="Impact of Emotion Features",
+                        value=f"+{confidence_delta:.2%}" if confidence_delta >= 0 else f"{confidence_delta:.2%}",
+                        help="The confidence lift (or drop) gained by adding emotion features to the model."
                     )
                 
                 st.markdown("###### Emotion Analysis (Input Feature)")
