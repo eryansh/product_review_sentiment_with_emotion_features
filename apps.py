@@ -6,24 +6,24 @@ import numpy as np
 from transformers import pipeline
 import plotly.graph_objects as go
 
-# --- Konfigurasi Halaman ---
+# --- Page Configuration ---
 st.set_page_config(
     page_title="Sentiment Analysis Comparison",
     page_icon="🤖",
-    layout="wide", # Diubah kepada 'wide' untuk paparan perbandingan yang lebih baik
+    layout="wide", # Changed to 'wide' for a better comparison view
 )
 
-# --- Memuatkan Aset Pipeline Anda ---
+# --- Loading Your Pipeline Assets ---
 @st.cache_resource
 def load_all_models():
-    """Memuatkan kedua-dua set pipeline: dengan dan tanpa ciri emosi."""
+    """Loads both sets of pipelines: with and without emotion features."""
     try:
-        # Muatkan model TANPA emosi
+        # Load model WITHOUT emotion
         tfidf_vectorizer = joblib.load('tfidf_vectorizer.joblib')
         chi2_selector = joblib.load('chi2_selector.joblib')
         naive_bayes_model = joblib.load('naive_bayes_model.joblib')
 
-        # Muatkan model DENGAN emosi
+        # Load model WITH emotion
         tfidf_vectorizer_emo = joblib.load('tfidf_vectorizer_emo.joblib')
         chi2_selector_emo = joblib.load('chi2_selector_emo.joblib')
         naive_bayes_model_emo = joblib.load('naive_bayes_model_emo.joblib')
@@ -34,16 +34,16 @@ def load_all_models():
         }
         return models
     except FileNotFoundError as e:
-        st.error(f"Ralat: Gagal mencari salah satu fail model. Pastikan semua 6 fail .joblib berada di direktori utama. Ralat: {e}")
+        st.error(f"Error: Failed to find one of the model files. Please ensure all 6 .joblib files are in the main directory. Error: {e}")
         return None
     except Exception as e:
-        st.error(f"Ralat semasa memuatkan model anda: {e}")
+        st.error(f"Error while loading your models: {e}")
         return None
 
-# --- Memuatkan Model Emosi (untuk Penjanaan Ciri) ---
+# --- Loading Emotion Model (for Feature Generation) ---
 @st.cache_resource
 def load_emotion_model():
-    """Memuatkan model pengesan emosi dari Hugging Face."""
+    """Loads the emotion detection model from Hugging Face."""
     try:
         emotion_classifier = pipeline(
             "text-classification",
@@ -52,27 +52,27 @@ def load_emotion_model():
         )
         return emotion_classifier
     except Exception as e:
-        st.error(f"Ralat memuatkan model emosi: {e}")
+        st.error(f"Error loading the emotion model: {e}")
         return None
 
-# --- UI dan Logik ---
-st.title("🤖 Perbandingan Analisis Sentimen")
-st.markdown("Bandingkan ramalan sentimen daripada dua model: satu menggunakan teks sahaja, dan satu lagi diperkaya dengan ciri-ciri emosi.")
+# --- UI and Logic ---
+st.title("🤖 Sentiment Analysis Comparison")
+st.markdown("Compare sentiment predictions from two models: one using text only, and another enriched with emotion features.")
 
-# Memuatkan semua model yang diperlukan
-with st.spinner("Memuatkan model AI, sila tunggu..."):
+# Loading all necessary models
+with st.spinner("Loading AI models, please wait..."):
     models = load_all_models()
     emotion_classifier = load_emotion_model()
 
 if models and emotion_classifier:
     with st.form("sentiment_form"):
-        user_text = st.text_area("Masukkan teks ulasan di sini:", "The battery life of this phone is amazing, I'm so happy with my purchase!", height=100)
-        submitted = st.form_submit_button("Bandingkan Analisis")
+        user_text = st.text_area("Enter review text here:", "The battery life of this phone is amazing, I'm so happy with my purchase!", height=100)
+        submitted = st.form_submit_button("Compare Analysis")
 
     if submitted and user_text:
-        with st.spinner("Menganalisis teks..."):
+        with st.spinner("Analyzing text..."):
             
-            # --- LAKUKAN SEMUA PENGIRAAN DAHULU ---
+            # --- PERFORM ALL CALCULATIONS FIRST ---
             # Model 1
             tfidf, selector, nb_model = models["without_emotion"]
             text_tfidf = tfidf.transform([user_text])
@@ -86,7 +86,7 @@ if models and emotion_classifier:
             emotion_scores_raw = emotion_classifier(user_text)[0]
             labels = ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"]
             scores_dict = {item['label']: item['score'] for item in emotion_scores_raw}
-            # DI BETULKAN: Typo --1 ditukar kepada -1
+            # CORRECTED: Typo --1 changed to -1
             emotion_features = np.array([scores_dict[l] for l in labels]).reshape(1, -1)
             text_tfidf_emo = tfidf_emo.transform([user_text])
             text_chi2_emo = selector_emo.transform(text_tfidf_emo)
@@ -103,54 +103,54 @@ if models and emotion_classifier:
             top_emotion_data = df_scores.loc[df_scores['Score'].idxmax()]
             top_emotion = top_emotion_data['Emotion']
             
-            # Bina teks interpretasi
+            # Build interpretation text
             interpretation_text = ""
             if predicted_label.lower() != predicted_label_emo.lower():
-                interpretation_text += f"Model-model ini **tidak bersetuju**. Model 1 meramalkan **{predicted_label.capitalize()}**, manakala Model 2 meramalkan **{predicted_label_emo.capitalize()}**. "
+                interpretation_text += f"These models **disagree**. Model 1 predicts **{predicted_label.capitalize()}**, while Model 2 predicts **{predicted_label_emo.capitalize()}**. "
             else:
-                interpretation_text += f"Kedua-dua model **bersetuju** bahawa sentimennya adalah **{predicted_label.capitalize()}**. "
+                interpretation_text += f"Both models **agree** that the sentiment is **{predicted_label.capitalize()}**. "
             if top_emotion not in ['neutral']:
-                interpretation_text += f"Pengesanan emosi **{top_emotion.capitalize()}** yang kuat berkemungkinan besar mempengaruhi Model 2, memberikannya keyakinan yang lebih tinggi dan ramalan yang lebih jitu."
+                interpretation_text += f"The detection of strong **{top_emotion.capitalize()}** emotion likely influenced Model 2, leading to higher confidence and a more nuanced prediction."
             else:
-                interpretation_text += f"Teks ini dikesan sebagai **Neutral** dari segi emosi. Ini membantu Model 2 untuk mengurangkan sebarang kecenderungan (bias) dan menghasilkan ramalan sentimen yang lebih seimbang."
+                interpretation_text += f"This text was detected as emotionally **Neutral**. This helps Model 2 reduce any bias and produce a more balanced sentiment prediction."
 
-            # --- PAPARKAN KEPUTUSAN DALAM KOLUM ---
+            # --- DISPLAY RESULTS IN COLUMNS ---
             col1, col2 = st.columns(2)
 
-            # --- KOLUM 1: Model Tanpa Emosi + Interpretasi ---
+            # --- COLUMN 1: Model Without Emotion + Interpretation ---
             with col1:
-                st.markdown("#### Model 1: Tanpa Ciri Emosi")
+                st.markdown("#### Model 1: Without Emotion Features")
                 
                 if str(predicted_label).lower() == 'positive':
-                    st.success(f"**Positif** (Keyakinan: {confidence:.2%})")
+                    st.success(f"**Positive** (Confidence: {confidence:.2%})")
                 elif str(predicted_label).lower() == 'negative':
-                    st.error(f"**Negatif** (Keyakinan: {confidence:.2%})")
+                    st.error(f"**Negative** (Confidence: {confidence:.2%})")
                 else:
-                    st.info(f"**Neutral** (Keyakinan: {confidence:.2%})")
+                    st.info(f"**Neutral** (Confidence: {confidence:.2%})")
                 
-                # DIUBAH SUAI: Gantikan carta dengan interpretasi
-                st.markdown("###### Interpretasi Keputusan")
+                # MODIFIED: Replace chart with interpretation
+                st.markdown("###### Interpretation of Results")
                 st.info(interpretation_text)
 
-            # --- KOLUM 2: Model Dengan Emosi ---
+            # --- COLUMN 2: Model With Emotion ---
             with col2:
-                st.markdown("#### Model 2: Dengan Ciri Emosi")
+                st.markdown("#### Model 2: With Emotion Features")
                 
                 if str(predicted_label_emo).lower() == 'positive':
-                    st.success(f"**Positif** (Keyakinan: {confidence_emo:.2%})")
+                    st.success(f"**Positive** (Confidence: {confidence_emo:.2%})")
                 elif str(predicted_label_emo).lower() == 'negative':
-                    st.error(f"**Negatif** (Keyakinan: {confidence_emo:.2%})")
+                    st.error(f"**Negative** (Confidence: {confidence_emo:.2%})")
                 else:
-                    st.info(f"**Neutral** (Keyakinan: {confidence_emo:.2%})")
+                    st.info(f"**Neutral** (Confidence: {confidence_emo:.2%})")
                 
                 st.metric(
-                    label="Peningkatan Keyakinan",
+                    label="Confidence Increase",
                     value=f"{confidence_emo:.2%}",
                     delta=f"{confidence_delta:.2%}",
-                    help="Perbezaan keyakinan untuk sentimen ini berbanding model tanpa ciri emosi."
+                    help="Difference in confidence for this sentiment compared to the model without emotion features."
                 )
                 
-                st.markdown("###### Analisis Emosi (Ciri Input)")
+                st.markdown("###### Emotion Analysis (Input Feature)")
                 
                 emotion_map = {
                     'sadness': {'emoji': '😢', 'color': '#3b82f6'},
@@ -183,7 +183,7 @@ if models and emotion_classifier:
                         showlegend=False,
                         height=220,
                         margin=dict(l=10, r=10, t=10, b=10),
-                        xaxis=dict(range=[0, 100], showgrid=False, title="Skor (%)"),
+                        xaxis=dict(range=[0, 100], showgrid=False, title="Score (%)"),
                         yaxis=dict(showgrid=False),
                         paper_bgcolor='rgba(0,0,0,0)',
                         plot_bgcolor='rgba(0,0,0,0)',
@@ -192,7 +192,7 @@ if models and emotion_classifier:
                     st.plotly_chart(fig_emotion, use_container_width=True)
 
     elif submitted and not user_text:
-        st.warning("Sila masukkan teks untuk dianalisis.")
+        st.warning("Please enter some text to analyze.")
 else:
-    st.error("Aplikasi tidak dapat dimulakan kerana model gagal dimuatkan. Sila semak fail model anda dan sambungan internet.")
+    st.error("The application could not start because the models failed to load. Please check your model files and internet connection.")
 
