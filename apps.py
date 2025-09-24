@@ -186,12 +186,12 @@ if models and emotion_classifier:
                 else:
                     st.info(f"**Neutral** (Confidence: {confidence_emo:.2%})")
                 
-                # DIUBAH SUAI: Metrik kini lebih fokus kepada impak
+                # MODIFIED: Metric label is now more specific
                 if not is_uncertain2:
                     st.metric(
-                        label="Impact of Emotion Features",
+                        label=f"Confidence Shift for '{predicted_label_emo.capitalize()}'",
                         value=f"+{confidence_delta:.2%}" if confidence_delta >= 0 else f"{confidence_delta:.2%}",
-                        help="The confidence lift (or drop) gained by adding emotion features to the model."
+                        help=f"The change in confidence for the '{predicted_label_emo.capitalize()}' sentiment after adding emotion features."
                     )
                 
                 st.markdown("###### Emotion Analysis (Input Feature)")
