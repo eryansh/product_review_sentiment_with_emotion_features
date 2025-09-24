@@ -146,8 +146,6 @@ if models and emotion_classifier:
                 predicted_class_index_emo = np.argmax(prediction_proba_emo)
                 predicted_label_emo = nb_model_emo.classes_[predicted_class_index_emo]
 
-                # BAHARU: Kira perbezaan keyakinan
-                # Dapatkan kebarangkalian untuk kelas yang sama dari model 1
                 confidence_from_model1 = prediction_proba[0][predicted_class_index_emo]
                 confidence_delta = confidence_emo - confidence_from_model1
 
@@ -158,7 +156,6 @@ if models and emotion_classifier:
                 else:
                     st.info(f"**Neutral** (Keyakinan: {confidence_emo:.2%})")
                 
-                # BAHARU: Paparkan metrik perbezaan
                 st.metric(
                     label="Peningkatan Keyakinan",
                     value=f"{confidence_emo:.2%}",
@@ -212,6 +209,23 @@ if models and emotion_classifier:
                         font=dict(color="#fff")
                     )
                     st.plotly_chart(fig_emotion, use_container_width=True)
+            
+            # --- BAHARU: Bahagian Interpretasi ---
+            st.divider()
+            st.markdown("#### Interpretasi Keputusan")
+
+            interpretation_text = ""
+            if predicted_label.lower() != predicted_label_emo.lower():
+                interpretation_text += f"Model-model ini **tidak bersetuju**. Model 1 meramalkan **{predicted_label.capitalize()}**, manakala Model 2 meramalkan **{predicted_label_emo.capitalize()}**. "
+            else:
+                interpretation_text += f"Kedua-dua model **bersetuju** bahawa sentimennya adalah **{predicted_label.capitalize()}**. "
+
+            if top_emotion not in ['neutral']:
+                interpretation_text += f"Pengesanan emosi **{top_emotion.capitalize()}** yang kuat berkemungkinan besar mempengaruhi Model 2, memberikannya keyakinan yang lebih tinggi dan ramalan yang lebih jitu."
+            else:
+                interpretation_text += f"Teks ini dikesan sebagai **Neutral** dari segi emosi. Ini membantu Model 2 untuk mengurangkan sebarang kecenderungan (bias) dan menghasilkan ramalan sentimen yang lebih seimbang."
+
+            st.info(interpretation_text)
 
 
     elif submitted and not user_text:
