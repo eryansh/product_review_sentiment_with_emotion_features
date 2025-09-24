@@ -94,10 +94,39 @@ if models and emotion_classifier:
                     st.info(f"**Neutral** (Keyakinan: {confidence:.2%})")
                 
                 st.markdown("###### Pecahan Sentimen")
+                # DIUBAH SUAI: Menggunakan Plotly untuk carta sentimen
                 df_proba = pd.DataFrame({'Sentimen': nb_model.classes_, 'Kebarangkalian': prediction_proba[0]})
-                sentiment_map = {'Positive': 'Positif', 'Negative': 'Negatif', 'Neutral': 'Neutral'}
-                df_proba['Sentimen'] = df_proba['Sentimen'].map(sentiment_map).fillna(df_proba['Sentimen'])
-                st.bar_chart(df_proba.set_index('Sentimen'), height=220)
+                df_proba['Kebarangkalian'] = df_proba['Kebarangkalian'] * 100 # Tukar kepada peratusan
+
+                sentiment_color_map = {
+                    'Positive': '#22c55e', # Hijau
+                    'Negative': '#ef4444', # Merah
+                    'Neutral': '#a1a1aa'  # Kelabu
+                }
+
+                fig_sentiment = go.Figure()
+                for index, row in df_proba.sort_values('Kebarangkalian', ascending=True).iterrows():
+                    sentiment = row['Sentimen']
+                    fig_sentiment.add_trace(go.Bar(
+                        y=[sentiment.capitalize()],
+                        x=[row['Kebarangkalian']],
+                        name=sentiment.capitalize(),
+                        orientation='h',
+                        marker_color=sentiment_color_map.get(sentiment, '#888')
+                    ))
+
+                fig_sentiment.update_layout(
+                    showlegend=False,
+                    height=220,
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    xaxis=dict(range=[0, 100], showgrid=False, title="Kebarangkalian (%)"),
+                    yaxis=dict(showgrid=False),
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font=dict(color="#fff")
+                )
+                st.plotly_chart(fig_sentiment, use_container_width=True)
+
 
             # --- PREDIKSI DENGAN EMOSI (KOLUM 2) ---
             with col2:
