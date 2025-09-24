@@ -81,12 +81,17 @@ if tfidf and selector and nb_model and emotion_classifier:
             final_features = hstack([text_chi2, emotion_features])
 
             # === LANGKAH 4: Buat Ramalan Sentimen ===
-            prediction = nb_model.predict(final_features)
             prediction_proba = nb_model.predict_proba(final_features)
+            
+            # DIBETULKAN: Kira keyakinan dengan cara yang lebih selamat untuk mengelakkan IndexError
+            confidence = np.max(prediction_proba)
+            # Dapatkan label sebenar yang diramalkan dari model
+            predicted_class_index = np.argmax(prediction_proba)
+            predicted_label = nb_model.classes_[predicted_class_index]
 
-            # Tentukan sentimen berdasarkan ramalan (anda mungkin perlu sahkan label ini)
-            sentiment_label = "Positif" if prediction[0] == 1 else "Negatif"
-            confidence = prediction_proba[0][prediction[0]]
+
+            # Tentukan sentimen berdasarkan ramalan (sahkan label '1' adalah Positif)
+            sentiment_label = "Positif" if predicted_label == 1 else "Negatif"
 
             # Paparkan keputusan akhir
             if sentiment_label == "Positif":
