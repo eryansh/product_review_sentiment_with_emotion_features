@@ -143,7 +143,13 @@ if models and emotion_classifier:
 
                 prediction_proba_emo = nb_model_emo.predict_proba(final_features)
                 confidence_emo = np.max(prediction_proba_emo)
-                predicted_label_emo = nb_model_emo.classes_[np.argmax(prediction_proba_emo)]
+                predicted_class_index_emo = np.argmax(prediction_proba_emo)
+                predicted_label_emo = nb_model_emo.classes_[predicted_class_index_emo]
+
+                # BAHARU: Kira perbezaan keyakinan
+                # Dapatkan kebarangkalian untuk kelas yang sama dari model 1
+                confidence_from_model1 = prediction_proba[0][predicted_class_index_emo]
+                confidence_delta = confidence_emo - confidence_from_model1
 
                 if str(predicted_label_emo).lower() == 'positive':
                     st.success(f"**Positif** (Keyakinan: {confidence_emo:.2%})")
@@ -152,35 +158,14 @@ if models and emotion_classifier:
                 else:
                     st.info(f"**Neutral** (Keyakinan: {confidence_emo:.2%})")
                 
-                # DIUBAH SUAI: Carta bar sentimen ditambah untuk Model 2
-                st.markdown("###### Pecahan Sentimen")
-                df_proba_emo = pd.DataFrame({'Sentimen': nb_model_emo.classes_, 'Kebarangkalian': prediction_proba_emo[0]})
-                df_proba_emo['Kebarangkalian'] = df_proba_emo['Kebarangkalian'] * 100
-
-                fig_sentiment_emo = go.Figure()
-                for index, row in df_proba_emo.sort_values('Kebarangkalian', ascending=True).iterrows():
-                    sentiment = row['Sentimen']
-                    fig_sentiment_emo.add_trace(go.Bar(
-                        y=[sentiment.capitalize()],
-                        x=[row['Kebarangkalian']],
-                        name=sentiment.capitalize(),
-                        orientation='h',
-                        marker_color=sentiment_color_map.get(sentiment, '#888')
-                    ))
-
-                fig_sentiment_emo.update_layout(
-                    showlegend=False,
-                    height=150, # Ketinggian dilaraskan
-                    margin=dict(l=10, r=10, t=10, b=10),
-                    xaxis=dict(range=[0, 100], showgrid=False, title="Kebarangkalian (%)"),
-                    yaxis=dict(showgrid=False),
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    font=dict(color="#fff")
+                # BAHARU: Paparkan metrik perbezaan
+                st.metric(
+                    label="Peningkatan Keyakinan",
+                    value=f"{confidence_emo:.2%}",
+                    delta=f"{confidence_delta:.2%}",
+                    help="Perbezaan keyakinan untuk sentimen ini berbanding model tanpa ciri emosi."
                 )
-                st.plotly_chart(fig_sentiment_emo, use_container_width=True)
-
-
+                
                 st.markdown("###### Analisis Emosi (Ciri Input)")
                 
                 emotion_map = {
@@ -199,7 +184,7 @@ if models and emotion_classifier:
                 top_emotion_data = df_scores.loc[df_scores['Score'].idxmax()]
                 top_emotion = top_emotion_data['Emotion']
 
-                sub_col1, sub_col2 = st.columns([1, 3]) # Nisbah dilaraskan
+                sub_col1, sub_col2 = st.columns([1, 3])
 
                 with sub_col1:
                     st.markdown(f"<div style='text-align: center;'><p style='font-size: 3rem; margin-bottom: 0;'>{emotion_map.get(top_emotion,{}).get('emoji','❓')}</p><p style='font-weight: bold;'>{top_emotion.capitalize()}</p></div>", unsafe_allow_html=True)
@@ -218,7 +203,7 @@ if models and emotion_classifier:
                     
                     fig_emotion.update_layout(
                         showlegend=False,
-                        height=150, # Ketinggian dilaraskan
+                        height=220,
                         margin=dict(l=10, r=10, t=10, b=10),
                         xaxis=dict(range=[0, 100], showgrid=False, title="Skor (%)"),
                         yaxis=dict(showgrid=False),
