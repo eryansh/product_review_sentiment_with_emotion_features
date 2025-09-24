@@ -18,13 +18,13 @@ st.set_page_config(
 def load_your_pipeline():
     """Memuatkan komponen pipeline Naive Bayes yang telah anda latih."""
     try:
-        # DIUBAH SUAI: Memuatkan set model yang betul (_emo)
+        # Memuatkan set model yang betul (_emo)
         tfidf_vectorizer = joblib.load('tfidf_vectorizer_emo.joblib')
         chi2_selector = joblib.load('chi2_selector_emo.joblib')
         naive_bayes_model = joblib.load('naive_bayes_model_emo.joblib')
         return tfidf_vectorizer, chi2_selector, naive_bayes_model
     except FileNotFoundError:
-        # DIUBAH SUAI: Mesej ralat dikemaskini
+        # Mesej ralat dikemaskini
         st.error("Ralat: Pastikan fail 'tfidf_vectorizer_emo.joblib', 'chi2_selector_emo.joblib', dan 'naive_bayes_model_emo.joblib' berada di direktori utama repositori anda.")
         return None, None, None
     except Exception as e:
@@ -48,7 +48,7 @@ def load_emotion_model():
 
 # --- UI dan Logik ---
 st.title("🤖 Analisis Sentimen Ulasan Produk")
-st.markdown("Masukkan teks ulasan produk, dan aplikasi ini akan menganalisis emosi serta meramalkan sentimen (Positif/Negatif) menggunakan model Naive Bayes yang telah dilatih.")
+st.markdown("Masukkan teks ulasan produk, dan aplikasi ini akan menganalisis emosi serta meramalkan sentimen (Positif/Negatif/Neutral) menggunakan model Naive Bayes yang telah dilatih.")
 
 # Memuatkan semua model yang diperlukan
 with st.spinner("Memuatkan model AI, sila tunggu..."):
@@ -83,21 +83,28 @@ if tfidf and selector and nb_model and emotion_classifier:
             # === LANGKAH 4: Buat Ramalan Sentimen ===
             prediction_proba = nb_model.predict_proba(final_features)
             
-            # DIBETULKAN: Kira keyakinan dengan cara yang lebih selamat untuk mengelakkan IndexError
+            # Kira keyakinan dengan cara yang lebih selamat
             confidence = np.max(prediction_proba)
             # Dapatkan label sebenar yang diramalkan dari model
             predicted_class_index = np.argmax(prediction_proba)
             predicted_label = nb_model.classes_[predicted_class_index]
 
+            # DIUBAH SUAI: Tentukan sentimen untuk 3 kelas
+            # Annnggap label adalah: 1 untuk Positif, 0 untuk Neutral, -1 untuk Negatif
+            if predicted_label == 1:
+                sentiment_label = "Positif"
+            elif predicted_label == 0:
+                sentiment_label = "Neutral"
+            else:
+                sentiment_label = "Negatif"
 
-            # Tentukan sentimen berdasarkan ramalan (sahkan label '1' adalah Positif)
-            sentiment_label = "Positif" if predicted_label == 1 else "Negatif"
-
-            # Paparkan keputusan akhir
+            # DIUBAH SUAI: Paparkan keputusan akhir untuk 3 kelas
             if sentiment_label == "Positif":
                 st.success(f"**Sentimen Diramalkan:** {sentiment_label} (Keyakinan: {confidence:.2%})")
-            else:
+            elif sentiment_label == "Negatif":
                 st.error(f"**Sentimen Diramalkan:** {sentiment_label} (Keyakinan: {confidence:.2%})")
+            else: # Untuk Neutral
+                st.info(f"**Sentimen Diramalkan:** {sentiment_label} (Keyakinan: {confidence:.2%})")
 
             # Paparkan analisis emosi yang digunakan sebagai ciri
             with st.expander("Lihat Analisis Emosi Terperinci"):
