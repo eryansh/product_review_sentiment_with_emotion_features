@@ -86,7 +86,8 @@ if models and emotion_classifier:
             emotion_scores_raw = emotion_classifier(user_text)[0]
             labels = ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"]
             scores_dict = {item['label']: item['score'] for item in emotion_scores_raw}
-            emotion_features = np.array([scores_dict[l] for l in labels]).reshape(1, --1)
+            # DI BETULKAN: Typo --1 ditukar kepada -1
+            emotion_features = np.array([scores_dict[l] for l in labels]).reshape(1, -1)
             text_tfidf_emo = tfidf_emo.transform([user_text])
             text_chi2_emo = selector_emo.transform(text_tfidf_emo)
             final_features = hstack([text_chi2_emo, emotion_features])
