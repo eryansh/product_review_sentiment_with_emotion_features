@@ -83,14 +83,10 @@ if tfidf and selector and nb_model and emotion_classifier:
             # === LANGKAH 4: Buat Ramalan Sentimen ===
             prediction_proba = nb_model.predict_proba(final_features)
             
-            # Kira keyakinan dengan cara yang lebih selamat
             confidence = np.max(prediction_proba)
-            # Dapatkan label sebenar yang diramalkan dari model
             predicted_class_index = np.argmax(prediction_proba)
             predicted_label = nb_model.classes_[predicted_class_index]
 
-            # DIBETULKAN: Gunakan label string sebenar dari model untuk logik paparan
-            # Model anda mengembalikan label seperti "Positive", "Negative", "Neutral"
             predicted_label_str = str(predicted_label)
 
             if predicted_label_str.lower() == 'positive':
@@ -104,14 +100,34 @@ if tfidf and selector and nb_model and emotion_classifier:
                 st.info(f"**Sentimen Diramalkan:** {sentiment_label_display} (Keyakinan: {confidence:.2%})")
             else:
                 st.warning(f"Gagal meramal sentimen. Label tidak dikenali: {predicted_label_str}")
+            
+            # BAHARU: Paparkan kebarangkalian untuk semua kelas sentimen
+            st.write("---")
+            st.write("**Pecahan Penuh Kebarangkalian Sentimen:**")
 
+            df_proba = pd.DataFrame({
+                'Sentimen': nb_model.classes_,
+                'Kebarangkalian': prediction_proba[0]
+            })
+
+            # Peta untuk menukar label Inggeris ke Bahasa Melayu
+            sentiment_map = {
+                'Positive': 'Positif',
+                'Negative': 'Negatif',
+                'Neutral': 'Neutral'
+            }
+            df_proba['Sentimen'] = df_proba['Sentimen'].map(sentiment_map).fillna(df_proba['Sentimen'])
+
+            st.bar_chart(df_proba.set_index('Sentimen'))
+
+            st.dataframe(df_proba.style.format({'Kebarangkalian': '{:.2%}'}), use_container_width=True)
 
             # Paparkan analisis emosi yang digunakan sebagai ciri
             with st.expander("Lihat Analisis Emosi Terperinci"):
                 df_scores = pd.DataFrame(emotion_scores_raw)
                 df_scores.rename(columns={'label': 'Emosi', 'score': 'Skor Keyakinan'}, inplace=True)
                 st.bar_chart(df_scores.set_index('Emosi'))
-                st.dataframe(df_scores, use_container_width=True)
+                st.dataframe(df_scores.style.format({'Skor Keyakinan': '{:.2%}'}), use_container_width=True)
 
     elif submitted and not user_text:
         st.warning("Sila masukkan teks untuk dianalisis.")
