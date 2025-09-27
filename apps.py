@@ -160,7 +160,7 @@ if models and emotion_classifier:
                         sentiment = row['Sentiment']
                         fig_sentiment1.add_trace(go.Bar(y=[sentiment.capitalize()], x=[row['Probability']], name=sentiment.capitalize(), orientation='h', marker_color=sentiment_color_map.get(sentiment, '#888')))
                     fig_sentiment1.update_layout(showlegend=False, height=180, margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(range=[0, 100], showgrid=False), yaxis=dict(showgrid=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#fff"))
-                    st.plotly_chart(fig_sentiment1, use_container_width=True)
+                    st.plotly_chart(fig_sentiment1, use_container_width=True, config={'displayModeBar': False})
 
                 with prob_col2:
                     st.markdown("<p style='text-align: center;'>With Emotion</p>", unsafe_allow_html=True)
@@ -175,7 +175,7 @@ if models and emotion_classifier:
                         sentiment = row['Sentiment']
                         fig_sentiment2.add_trace(go.Bar(y=[sentiment.capitalize()], x=[row['Probability']], name=sentiment.capitalize(), orientation='h', marker_color=sentiment_color_map.get(sentiment, '#888')))
                     fig_sentiment2.update_layout(showlegend=False, height=180, margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(range=[0, 100], showgrid=False), yaxis=dict(showgrid=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#fff"))
-                    st.plotly_chart(fig_sentiment2, use_container_width=True)
+                    st.plotly_chart(fig_sentiment2, use_container_width=True, config={'displayModeBar': False})
 
                 st.markdown("###### Interpretation of Results")
                 st.info(interpretation_text)
@@ -240,9 +240,10 @@ if models and emotion_classifier:
                         plot_bgcolor='rgba(0,0,0,0)',
                         font=dict(color="#fff")
                     )
-                    st.plotly_chart(fig_emotion, use_container_width=True)
+                    st.plotly_chart(fig_emotion, use_container_width=True, config={'displayModeBar': False})
 
     elif submitted and not user_text:
         st.warning("Please enter some text to analyze.")
 else:
     st.error("The application could not start because the models failed to load. Please check your model files and internet connection.")
+
