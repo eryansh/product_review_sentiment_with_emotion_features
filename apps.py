@@ -60,12 +60,13 @@ def load_emotion_model():
 
 # --- Video Background ---
 st.sidebar.header("Background Options")
-uploaded_video = st.sidebar.file_uploader("Upload a background video", type=["mp4", "mov"])
+# Using the raw GitHub content URL is crucial for direct file access.
+video_url = st.sidebar.text_input(
+    "Enter video URL", 
+    "https://raw.githubusercontent.com/eryansh/product_review_sentiment_with_emotion_features/main/background.mp4"
+)
 
-if uploaded_video is not None:
-    video_bytes = uploaded_video.read()
-    video_base64 = base64.b64encode(video_bytes).decode()
-    
+if video_url:
     st.markdown(
         f"""
         <style>
@@ -83,7 +84,7 @@ if uploaded_video is not None:
         }}
         </style>
         <video id="bg-video" autoplay loop muted>
-            <source src="data:video/mp4;base64,{video_base64}" type="video/mp4">
+            <source src="{video_url}" type="video/mp4">
         </video>
         """,
         unsafe_allow_html=True
