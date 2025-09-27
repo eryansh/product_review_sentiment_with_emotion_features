@@ -156,17 +156,6 @@ models = load_all_models()
 emotion_classifier = load_emotion_model()
 
 if models and emotion_classifier:
-    if 'submitted' not in st.session_state:
-        st.session_state.submitted = False
-        st.session_state.user_text = "The battery life of this phone is amazing, I'm so happy with my purchase!"
-
-    def handle_submit():
-        st.session_state.user_text = st.session_state.text_input
-        st.session_state.submitted = True
-
-    def handle_reset():
-        st.session_state.submitted = False
-
     st.markdown("""
         <style> textarea[aria-label="Enter review text here:"] {{ resize: none; overflow-y: hidden; }} </style>
         <script>
@@ -183,61 +172,56 @@ if models and emotion_classifier:
         </script>
     """, unsafe_allow_html=True)
 
-    if not st.session_state.submitted:
-        with st.form("sentiment_form"):
-            st.text_area("Enter review text here:", value=st.session_state.user_text, key="text_input")
-            st.form_submit_button("Compare Analysis", on_click=handle_submit)
-    else:
-        user_text = st.session_state.user_text
-        if not user_text.strip():
-            st.warning("Please enter some text to analyze.")
-            st.button("Go Back", on_click=handle_reset)
-        else:
-            with st.spinner("Analyzing text..."):
-                results = analyze_sentiment(user_text, models, emotion_classifier)
+    with st.form("sentiment_form"):
+        user_text = st.text_area("Enter review text here:", "The battery life of this phone is amazing, I'm so happy with my purchase!")
+        submitted = st.form_submit_button("Compare Analysis")
 
-            st.markdown(f"> **Original Text:** *{user_text}*")
-            st.divider()
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("#### Model 1: Without Emotion Features")
-                display_sentiment_result(**results["model1"])
-                st.markdown("###### Sentiment Probability Comparison")
-                prob_col1, prob_col2 = st.columns(2)
-                with prob_col1:
-                    st.markdown("<p style='text-align: center;'>Without Emotion</p>", unsafe_allow_html=True)
-                    create_sentiment_chart(results["model1"]["df"])
-                with prob_col2:
-                    st.markdown("<p style='text-align: center;'>With Emotion</p>", unsafe_allow_html=True)
-                    create_sentiment_chart(results["model2"]["df"])
-                st.markdown("###### Interpretation of Results")
-                st.info(results["comparison"]["text"])
+    if submitted and user_text.strip():
+        with st.spinner("Analyzing text..."):
+            results = analyze_sentiment(user_text, models, emotion_classifier)
 
-            with col2:
-                st.markdown("#### Model 2: With Emotion Features")
-                display_sentiment_result(**results["model2"])
-                if not results["model2"]["is_uncertain"]:
-                    st.metric(
-                        label=f"Confidence Shift for '{results['model2']['prediction'].capitalize()}'",
-                        value=f"{results['comparison']['delta']:+.2%}",
-                        help="How much the confidence changed after adding emotion features."
-                    )
-                st.markdown("###### Emotion Analysis (Input Feature)")
-                emotion_map = {'sadness': '😢', 'joy': '😂', 'anger': '😠', 'fear': '😨', 'surprise': '😮', 'disgust': '🤢', 'neutral': '😐'}
-                color_map = {'sadness': '#3b82f6', 'joy': '#facc15', 'anger': '#ef4444', 'fear': '#a855f7', 'surprise': '#22d3ee', 'disgust': '#84cc16', 'neutral': '#a1a1aa'}
-                top_emotion = results["emotion"]["top"]
-                sub_col1, sub_col2 = st.columns([1, 3])
-                with sub_col1:
-                    st.markdown(f"<div style='text-align: center;'><p style='font-size: 3rem; margin-bottom: 0;'>{emotion_map.get(top_emotion,'❓')}</p><p style='font-weight: bold;'>{top_emotion.capitalize()}</p></div>", unsafe_allow_html=True)
-                with sub_col2:
-                    fig_emotion = go.Figure()
-                    for _, row in results["emotion"]["df"].sort_values('Score', ascending=True).iterrows():
-                        fig_emotion.add_trace(go.Bar(y=[row['Emotion'].capitalize()], x=[row['Score']], name=row['Emotion'].capitalize(), orientation='h', marker_color=color_map.get(row['Emotion'], '#888')))
-                    fig_emotion.update_layout(showlegend=False, height=220, margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(range=[0, 100], showgrid=False, title="Score (%)"), yaxis=dict(showgrid=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#fff"))
-                    st.plotly_chart(fig_emotion, use_container_width=True, config={'displayModeBar': False})
-            
-            st.button("Analyze Another Review", on_click=handle_reset)
+        st.markdown(f"> **Original Text:** *{user_text}*")
+        st.divider()
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### Model 1: Without Emotion Features")
+            display_sentiment_result(**results["model1"])
+            st.markdown("###### Sentiment Probability Comparison")
+            prob_col1, prob_col2 = st.columns(2)
+            with prob_col1:
+                st.markdown("<p style='text-align: center;'>Without Emotion</p>", unsafe_allow_html=True)
+                create_sentiment_chart(results["model1"]["df"])
+            with prob_col2:
+                st.markdown("<p style='text-align: center;'>With Emotion</p>", unsafe_allow_html=True)
+                create_sentiment_chart(results["model2"]["df"])
+            st.markdown("###### Interpretation of Results")
+            st.info(results["comparison"]["text"])
+
+        with col2:
+            st.markdown("#### Model 2: With Emotion Features")
+            display_sentiment_result(**results["model2"])
+            if not results["model2"]["is_uncertain"]:
+                st.metric(
+                    label=f"Confidence Shift for '{results['model2']['prediction'].capitalize()}'",
+                    value=f"{results['comparison']['delta']:+.2%}",
+                    help="How much the confidence changed after adding emotion features."
+                )
+            st.markdown("###### Emotion Analysis (Input Feature)")
+            emotion_map = {'sadness': '😢', 'joy': '😂', 'anger': '😠', 'fear': '😨', 'surprise': '😮', 'disgust': '🤢', 'neutral': '😐'}
+            color_map = {'sadness': '#3b82f6', 'joy': '#facc15', 'anger': '#ef4444', 'fear': '#a855f7', 'surprise': '#22d3ee', 'disgust': '#84cc16', 'neutral': '#a1a1aa'}
+            top_emotion = results["emotion"]["top"]
+            sub_col1, sub_col2 = st.columns([1, 3])
+            with sub_col1:
+                st.markdown(f"<div style='text-align: center;'><p style='font-size: 3rem; margin-bottom: 0;'>{emotion_map.get(top_emotion,'❓')}</p><p style='font-weight: bold;'>{top_emotion.capitalize()}</p></div>", unsafe_allow_html=True)
+            with sub_col2:
+                fig_emotion = go.Figure()
+                for _, row in results["emotion"]["df"].sort_values('Score', ascending=True).iterrows():
+                    fig_emotion.add_trace(go.Bar(y=[row['Emotion'].capitalize()], x=[row['Score']], name=row['Emotion'].capitalize(), orientation='h', marker_color=color_map.get(row['Emotion'], '#888')))
+                fig_emotion.update_layout(showlegend=False, height=220, margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(range=[0, 100], showgrid=False, title="Score (%)"), yaxis=dict(showgrid=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#fff"))
+                st.plotly_chart(fig_emotion, use_container_width=True, config={'displayModeBar': False})
+    elif submitted:
+        st.warning("Please enter some text to analyze.")
 
 else:
     st.error("Application could not start. Please check the model files and internet connection.")
