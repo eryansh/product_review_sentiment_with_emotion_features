@@ -98,8 +98,37 @@ with st.spinner("Loading AI models, please wait..."):
 
 if models and emotion_classifier:
     with st.form("sentiment_form"):
-        user_text = st.text_area("Enter review text here:", "The battery life of this phone is amazing, I'm so happy with my purchase!", height=100)
+        user_text = st.text_area("Enter review text here:", "The battery life of this phone is amazing, I'm so happy with my purchase!")
         submitted = st.form_submit_button("Compare Analysis")
+    
+    # Add custom JS and CSS for the auto-expanding textarea
+    st.markdown("""
+        <style>
+            textarea[aria-label="Enter review text here:"] {
+                resize: none;
+                overflow-y: hidden;
+            }
+        </style>
+        <script>
+            function setupAutoExpand() {
+                const textarea = document.querySelector('textarea[aria-label="Enter review text here:"]');
+                if (textarea && !textarea.hasAttribute('data-auto-expand-setup')) {
+                    const adjustHeight = () => {
+                        textarea.style.height = 'auto';
+                        textarea.style.height = (textarea.scrollHeight) + 'px';
+                    };
+                    textarea.addEventListener('input', adjustHeight);
+                    textarea.setAttribute('data-auto-expand-setup', 'true');
+                    // Initial adjustment in case there's default text
+                    setTimeout(adjustHeight, 100);
+                }
+            }
+            
+            // Run on initial load and every Streamlit rerun
+            setTimeout(setupAutoExpand, 200);
+        </script>
+    """, unsafe_allow_html=True)
+
 
     if submitted and user_text:
         with st.spinner("Analyzing text..."):
