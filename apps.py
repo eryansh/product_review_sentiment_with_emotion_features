@@ -57,6 +57,7 @@ def load_emotion_model():
 
 # --- UI and Logic ---
 st.title("🤖 Sentiment Analysis Comparison")
+st.image('image_055626.png')
 st.markdown("Compare sentiment predictions from two models: one using text only, and another enriched with emotion features.")
 
 # Loading all necessary models
