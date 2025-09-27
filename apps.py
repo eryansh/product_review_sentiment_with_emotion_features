@@ -58,7 +58,7 @@ def load_emotion_model():
 # --- UI and Logic ---
 st.title("🤖 Sentiment Analysis Comparison")
 # You can replace this URL with a direct link to any image on the web.
-st.image('https://gibion.ai/wp-content/uploads/2025/08/Person-shopping-online-with-a-facial-expression-recognition-interface-768x512.png')
+# st.image('https://gibion.ai/wp-content/uploads/2025/08/Person-shopping-online-with-a-facial-expression-recognition-interface-768x512.png')
 st.markdown("Compare sentiment predictions from two models: one using text only, and another enriched with emotion features.")
 
 # Loading all necessary models
@@ -248,4 +248,5 @@ if models and emotion_classifier:
         st.warning("Please enter some text to analyze.")
 else:
     st.error("The application could not start because the models failed to load. Please check your model files and internet connection.")
+
 
