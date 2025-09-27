@@ -14,18 +14,6 @@ st.set_page_config(
     layout="wide", # Changed to 'wide' for a better comparison view
 )
 
-# --- Function to encode video for background ---
-@st.cache_data
-def get_video_as_base64(file):
-    """Reads a video file and returns it as a base64 encoded string."""
-    try:
-        with open(file, "rb") as f:
-            data = f.read()
-        return base64.b64encode(data).decode()
-    except FileNotFoundError:
-        st.error("Video file not found. Please make sure `background.mp4` is in the main directory.")
-        return None
-
 # --- Loading Your Pipeline Assets ---
 @st.cache_resource
 def load_all_models():
@@ -71,9 +59,13 @@ def load_emotion_model():
 # --- UI and Logic ---
 
 # --- Video Background ---
-# Ensure you have a file named 'background.mp4' in the same folder as this script.
-video_base64 = get_video_as_base64("background.mp4")
-if video_base64:
+st.sidebar.header("Background Options")
+uploaded_video = st.sidebar.file_uploader("Upload a background video", type=["mp4", "mov"])
+
+if uploaded_video is not None:
+    video_bytes = uploaded_video.read()
+    video_base64 = base64.b64encode(video_bytes).decode()
+    
     st.markdown(
         f"""
         <style>
@@ -100,7 +92,7 @@ if video_base64:
 
 st.title("🤖 Sentiment Analysis Comparison")
 # You can replace this URL with a direct link to any image on the web.
-# st.image('https://placehold.co/1200x300/0E1117/FFFFFF?text=Sentiment+Analysis+Dashboard')
+st.image('https://placehold.co/1200x300/0E1117/FFFFFF?text=Sentiment+Analysis+Dashboard')
 st.markdown("Compare sentiment predictions from two models: one using text only, and another enriched with emotion features.")
 
 # Loading all necessary models
