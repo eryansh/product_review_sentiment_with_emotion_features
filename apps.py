@@ -9,7 +9,7 @@ import base64
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Sentiment Analysis Comparison",
+    page_title="Sentiment Classification with Emotion Features",
     page_icon="🤖",
     layout="wide",
 )
@@ -155,21 +155,15 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap');
     .main-title {
         font-family: 'Poppins', sans-serif;
-        font-size: 2.75rem;
+        font-size: 3.25rem;
         font-weight: 700;
         text-align: center;
         text-shadow: 2px 2px 5px rgba(0,0,0,0.3);
         padding-top: 2rem;
-    }
-    .sub-title {
-        text-align: center;
-        color: #e0e0e0;
-        font-size: 1.1rem;
         padding-bottom: 2rem;
     }
     </style>
-    <p class="main-title">🤖 Sentiment Analysis Comparison</p>
-    <p class="sub-title">Compare sentiment predictions from two models: one using text only, and another enriched with emotion features.</p>
+    <p class="main-title">Sentiment Classification of Text Reviews Enriched with J-Hartmann Emotion Features</p>
     """, unsafe_allow_html=True)
 
 models = load_all_models()
