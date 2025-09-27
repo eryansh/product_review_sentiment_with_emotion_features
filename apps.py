@@ -59,12 +59,9 @@ def load_emotion_model():
 # --- UI and Logic ---
 
 # --- Video Background ---
-st.sidebar.header("Background Options")
-# Using the raw GitHub content URL is crucial for direct file access.
-video_url = st.sidebar.text_input(
-    "Enter video URL", 
-    "https://raw.githubusercontent.com/eryansh/product_review_sentiment_with_emotion_features/main/background.mp4"
-)
+# The video URL is now hardcoded and the sidebar option is removed.
+video_url = "https://raw.githubusercontent.com/eryansh/product_review_sentiment_with_emotion_features/main/background.mp4"
+
 
 if video_url:
     st.markdown(
