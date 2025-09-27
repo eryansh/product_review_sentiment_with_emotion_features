@@ -198,12 +198,12 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap');
     .main-title {
         font-family: 'tahoma', sans-serif;
-        font-size: clamp(2.5rem, 8vw, 7rem); /* Responsive font size */
-        font-weight: 700;
+        font-size: clamp(12.5rem, 18vw, 17rem); /* Responsive font size */
+        font-weight: 1700;
         text-align: center;
         text-shadow: 2px 2px 5px rgba(0,0,0,0.3);
-        padding-top: 2rem;
-        padding-bottom: 2rem;
+        padding-top: 12rem;
+        padding-bottom: 12rem;
         text-transform: uppercase;
     }
     </style>
@@ -323,3 +323,4 @@ st.markdown("""
         Model deployed by Heryanshah Bin Suhimi | This web application is for FYP research purposes only.
     </div>
 """, unsafe_allow_html=True)
+
