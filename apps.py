@@ -227,7 +227,7 @@ if models and emotion_classifier:
 
     with st.form("sentiment_form"):
         user_text = st.text_area("Enter review text here:", "The battery life of this phone is amazing, I'm so happy with my purchase!")
-        submitted = st.form_submit_button("Compare Analysis")
+        submitted = st.form_submit_button("Predict Sentiment")
 
     if submitted and user_text.strip():
         with st.spinner("Analyzing text..."):
@@ -274,4 +274,5 @@ if models and emotion_classifier:
 
 else:
     st.error("Application could not start. Please check the model files and internet connection.")
+
 
