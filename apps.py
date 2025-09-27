@@ -291,6 +291,7 @@ st.markdown("""
         }
     </style>
     <div class="footer">
-        Model Deployed by: Heryanshah Bin Suhimi @Suhaimi
+        Model deployed by Heryanshah Bin Suhimi | This web application is for FYP research purposes only.
     </div>
 """, unsafe_allow_html=True)
+
