@@ -246,4 +246,3 @@ if models and emotion_classifier:
         st.warning("Please enter some text to analyze.")
 else:
     st.error("The application could not start because the models failed to load. Please check your model files and internet connection.")
-
