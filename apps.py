@@ -89,8 +89,6 @@ if video_url:
 
 
 st.title("🤖 Sentiment Analysis Comparison")
-# You can replace this URL with a direct link to any image on the web.
-st.image('https://placehold.co/1200x300/0E1117/FFFFFF?text=Sentiment+Analysis+Dashboard')
 st.markdown("Compare sentiment predictions from two models: one using text only, and another enriched with emotion features.")
 
 # Loading all necessary models
