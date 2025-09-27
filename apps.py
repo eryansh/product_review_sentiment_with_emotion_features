@@ -155,7 +155,7 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap');
     .main-title {
         font-family: 'Poppins', sans-serif;
-        font-size: 6.0rem;
+        font-size: 10.0rem;
         font-weight: 700;
         text-align: center;
         text-shadow: 2px 2px 5px rgba(0,0,0,0.3);
@@ -239,5 +239,6 @@ if models and emotion_classifier:
 
 else:
     st.error("Application could not start. Please check the model files and internet connection.")
+
 
 
