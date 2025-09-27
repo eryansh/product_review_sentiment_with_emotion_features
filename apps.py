@@ -97,10 +97,23 @@ with st.spinner("Loading AI models, please wait..."):
     emotion_classifier = load_emotion_model()
 
 if models and emotion_classifier:
-    with st.form("sentiment_form"):
-        user_text = st.text_area("Enter review text here:", "The battery life of this phone is amazing, I'm so happy with my purchase!")
-        submitted = st.form_submit_button("Compare Analysis")
-    
+    # Initialize session state to manage the app's flow
+    if 'submitted' not in st.session_state:
+        st.session_state.submitted = False
+        st.session_state.user_text = "The battery life of this phone is amazing, I'm so happy with my purchase!"
+
+    # Callback functions to update the state
+    def handle_submit():
+        if st.session_state.text_input:
+            st.session_state.user_text = st.session_state.text_input
+            st.session_state.submitted = True
+        else:
+            st.warning("Please enter some text to analyze.")
+
+    def handle_reset():
+        st.session_state.submitted = False
+        st.session_state.text_input = st.session_state.user_text # Keep last text
+
     # Add custom JS and CSS for the auto-expanding textarea
     st.markdown("""
         <style>
@@ -119,20 +132,22 @@ if models and emotion_classifier:
                     };
                     textarea.addEventListener('input', adjustHeight);
                     textarea.setAttribute('data-auto-expand-setup', 'true');
-                    // Initial adjustment in case there's default text
                     setTimeout(adjustHeight, 100);
                 }
             }
-            
-            // Run on initial load and every Streamlit rerun
             setTimeout(setupAutoExpand, 200);
         </script>
     """, unsafe_allow_html=True)
 
-
-    if submitted and user_text:
+    if not st.session_state.submitted:
+        # Show the input form
+        with st.form("sentiment_form"):
+            st.text_area("Enter review text here:", key="text_input", value=st.session_state.user_text)
+            st.form_submit_button("Compare Analysis", on_click=handle_submit)
+    else:
+        # Show the results
+        user_text = st.session_state.user_text
         with st.spinner("Analyzing text..."):
-            
             # --- PERFORM ALL CALCULATIONS FIRST ---
             # Model 1
             tfidf, selector, nb_model = models["without_emotion"]
@@ -145,7 +160,6 @@ if models and emotion_classifier:
 
             # Model 2
             tfidf_emo, selector_emo, nb_model_emo = models["with_emotion"]
-            # Truncate text for the emotion model to prevent token limit errors
             truncated_text = user_text[:512]
             emotion_scores_raw = emotion_classifier(truncated_text)[0]
             labels = ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"]
@@ -184,129 +198,63 @@ if models and emotion_classifier:
                     interpretation_text += f"This text was detected as emotionally **Neutral**. This helps Model 2 reduce any bias and produce a more balanced sentiment prediction."
 
             # --- DISPLAY RESULTS IN COLUMNS ---
+            st.markdown(f"> **Original Text:** *{user_text}*")
+            st.divider()
             col1, col2 = st.columns(2)
 
-            # --- COLUMN 1: Model Without Emotion + Interpretation ---
             with col1:
                 st.markdown("#### Model 1: Without Emotion Features")
-                
-                if is_uncertain1:
-                    st.warning("Model is uncertain due to unrecognized input.")
-                elif str(predicted_label).lower() == 'positive':
-                    st.success(f"**Positive** (Confidence: {confidence:.2%})")
-                elif str(predicted_label).lower() == 'negative':
-                    st.error(f"**Negative** (Confidence: {confidence:.2%})")
-                else:
-                    st.info(f"**Neutral** (Confidence: {confidence:.2%})")
-                
+                if is_uncertain1: st.warning("Model is uncertain due to unrecognized input.")
+                elif str(predicted_label).lower() == 'positive': st.success(f"**Positive** (Confidence: {confidence:.2%})")
+                elif str(predicted_label).lower() == 'negative': st.error(f"**Negative** (Confidence: {confidence:.2%})")
+                else: st.info(f"**Neutral** (Confidence: {confidence:.2%})")
                 st.markdown("###### Sentiment Probability Comparison")
-                
                 prob_col1, prob_col2 = st.columns(2)
-                
-                sentiment_color_map = {
-                    'Positive': '#22c55e', # Green
-                    'Negative': '#ef4444', # Red
-                    'Neutral': '#a1a1aa'  # Gray
-                }
-                
+                sentiment_color_map = {'Positive': '#22c55e', 'Negative': '#ef4444', 'Neutral': '#a1a1aa'}
                 with prob_col1:
                     st.markdown("<p style='text-align: center;'>Without Emotion</p>", unsafe_allow_html=True)
-                    df_proba = pd.DataFrame({'Sentiment': nb_model.classes_, 'Probability': prediction_proba[0]})
-                    df_proba['Probability'] = df_proba['Probability'] * 100
-
-                    # MODIFIED: Define fixed order and sort the dataframe
+                    df_proba = pd.DataFrame({'Sentiment': nb_model.classes_, 'Probability': prediction_proba[0] * 100})
                     sentiment_order = ['Negative', 'Neutral', 'Positive']
                     df_proba = df_proba.set_index('Sentiment').reindex(sentiment_order).reset_index()
-
                     fig_sentiment1 = go.Figure()
-                    for index, row in df_proba.iterrows():
-                        sentiment = row['Sentiment']
-                        fig_sentiment1.add_trace(go.Bar(y=[sentiment.capitalize()], x=[row['Probability']], name=sentiment.capitalize(), orientation='h', marker_color=sentiment_color_map.get(sentiment, '#888')))
+                    for _, row in df_proba.iterrows():
+                        fig_sentiment1.add_trace(go.Bar(y=[row['Sentiment'].capitalize()], x=[row['Probability']], name=row['Sentiment'].capitalize(), orientation='h', marker_color=sentiment_color_map.get(row['Sentiment'], '#888')))
                     fig_sentiment1.update_layout(showlegend=False, height=180, margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(range=[0, 100], showgrid=False), yaxis=dict(showgrid=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#fff"))
                     st.plotly_chart(fig_sentiment1, use_container_width=True, config={'displayModeBar': False})
-
                 with prob_col2:
                     st.markdown("<p style='text-align: center;'>With Emotion</p>", unsafe_allow_html=True)
-                    df_proba_emo = pd.DataFrame({'Sentiment': nb_model_emo.classes_, 'Probability': prediction_proba_emo[0]})
-                    df_proba_emo['Probability'] = df_proba_emo['Probability'] * 100
-                    
-                    # MODIFIED: Define fixed order and sort the dataframe
+                    df_proba_emo = pd.DataFrame({'Sentiment': nb_model_emo.classes_, 'Probability': prediction_proba_emo[0] * 100})
                     df_proba_emo = df_proba_emo.set_index('Sentiment').reindex(sentiment_order).reset_index()
-                    
                     fig_sentiment2 = go.Figure()
-                    for index, row in df_proba_emo.iterrows():
-                        sentiment = row['Sentiment']
-                        fig_sentiment2.add_trace(go.Bar(y=[sentiment.capitalize()], x=[row['Probability']], name=sentiment.capitalize(), orientation='h', marker_color=sentiment_color_map.get(sentiment, '#888')))
+                    for _, row in df_proba_emo.iterrows():
+                        fig_sentiment2.add_trace(go.Bar(y=[row['Sentiment'].capitalize()], x=[row['Probability']], name=row['Sentiment'].capitalize(), orientation='h', marker_color=sentiment_color_map.get(row['Sentiment'], '#888')))
                     fig_sentiment2.update_layout(showlegend=False, height=180, margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(range=[0, 100], showgrid=False), yaxis=dict(showgrid=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#fff"))
                     st.plotly_chart(fig_sentiment2, use_container_width=True, config={'displayModeBar': False})
-
                 st.markdown("###### Interpretation of Results")
                 st.info(interpretation_text)
 
-            # --- COLUMN 2: Model With Emotion ---
             with col2:
                 st.markdown("#### Model 2: With Emotion Features")
-                
-                if is_uncertain2:
-                    st.warning("Model is uncertain due to unrecognized input.")
-                elif str(predicted_label_emo).lower() == 'positive':
-                    st.success(f"**Positive** (Confidence: {confidence_emo:.2%})")
-                elif str(predicted_label_emo).lower() == 'negative':
-                    st.error(f"**Negative** (Confidence: {confidence_emo:.2%})")
-                else:
-                    st.info(f"**Neutral** (Confidence: {confidence_emo:.2%})")
-                
-                # MODIFIED: Metric label is now more specific
+                if is_uncertain2: st.warning("Model is uncertain due to unrecognized input.")
+                elif str(predicted_label_emo).lower() == 'positive': st.success(f"**Positive** (Confidence: {confidence_emo:.2%})")
+                elif str(predicted_label_emo).lower() == 'negative': st.error(f"**Negative** (Confidence: {confidence_emo:.2%})")
+                else: st.info(f"**Neutral** (Confidence: {confidence_emo:.2%})")
                 if not is_uncertain2:
-                    st.metric(
-                        label=f"Confidence Shift for '{predicted_label_emo.capitalize()}'",
-                        value=f"+{confidence_delta:.2%}" if confidence_delta >= 0 else f"{confidence_delta:.2%}",
-                        help=f"The change in confidence for the '{predicted_label_emo.capitalize()}' sentiment after adding emotion features."
-                    )
-                
+                    st.metric(label=f"Confidence Shift for '{predicted_label_emo.capitalize()}'", value=f"{confidence_delta:+.2%}", help=f"The change in confidence for the '{predicted_label_emo.capitalize()}' sentiment after adding emotion features.")
                 st.markdown("###### Emotion Analysis (Input Feature)")
-                
-                emotion_map = {
-                    'sadness': {'emoji': '😢', 'color': '#3b82f6'},
-                    'joy': {'emoji': '😂', 'color': '#facc15'},
-                    'anger': {'emoji': '😠', 'color': '#ef4444'},
-                    'fear': {'emoji': '😨', 'color': '#a855f7'},
-                    'surprise': {'emoji': '😮', 'color': '#22d3ee'},
-                    'disgust': {'emoji': '🤢', 'color': '#84cc16'},
-                    'neutral': {'emoji': '😐', 'color': '#a1a1aa'}
-                }
-
+                emotion_map = {'sadness': {'emoji': '😢', 'color': '#3b82f6'}, 'joy': {'emoji': '😂', 'color': '#facc15'}, 'anger': {'emoji': '😠', 'color': '#ef4444'}, 'fear': {'emoji': '😨', 'color': '#a855f7'}, 'surprise': {'emoji': '😮', 'color': '#22d3ee'}, 'disgust': {'emoji': '🤢', 'color': '#84cc16'}, 'neutral': {'emoji': '😐', 'color': '#a1a1aa'}}
                 sub_col1, sub_col2 = st.columns([1, 3])
-
                 with sub_col1:
                     st.markdown(f"<div style='text-align: center;'><p style='font-size: 3rem; margin-bottom: 0;'>{emotion_map.get(top_emotion,{}).get('emoji','❓')}</p><p style='font-weight: bold;'>{top_emotion.capitalize()}</p></div>", unsafe_allow_html=True)
-
                 with sub_col2:
                     fig_emotion = go.Figure()
-                    for index, row in df_scores.sort_values('Score', ascending=True).iterrows():
-                        emotion = row['Emotion']
-                        fig_emotion.add_trace(go.Bar(
-                            y=[emotion.capitalize()],
-                            x=[row['Score']],
-                            name=emotion.capitalize(),
-                            orientation='h',
-                            marker_color=emotion_map.get(emotion, {}).get('color', '#888')
-                        ))
-                    
-                    fig_emotion.update_layout(
-                        showlegend=False,
-                        height=220,
-                        margin=dict(l=10, r=10, t=10, b=10),
-                        xaxis=dict(range=[0, 100], showgrid=False, title="Score (%)"),
-                        yaxis=dict(showgrid=False),
-                        paper_bgcolor='rgba(0,0,0,0)',
-                        plot_bgcolor='rgba(0,0,0,0)',
-                        font=dict(color="#fff")
-                    )
+                    for _, row in df_scores.sort_values('Score', ascending=True).iterrows():
+                        fig_emotion.add_trace(go.Bar(y=[row['Emotion'].capitalize()], x=[row['Score']], name=row['Emotion'].capitalize(), orientation='h', marker_color=emotion_map.get(row['Emotion'], {}).get('color', '#888')))
+                    fig_emotion.update_layout(showlegend=False, height=220, margin=dict(l=10, r=10, t=10, b=10), xaxis=dict(range=[0, 100], showgrid=False, title="Score (%)"), yaxis=dict(showgrid=False), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font=dict(color="#fff"))
                     st.plotly_chart(fig_emotion, use_container_width=True, config={'displayModeBar': False})
+        
+        st.button("Analyze Another Review", on_click=handle_reset)
 
-    elif submitted and not user_text:
-        st.warning("Please enter some text to analyze.")
 else:
     st.error("The application could not start because the models failed to load. Please check your model files and internet connection.")
 
