@@ -145,7 +145,9 @@ if models and emotion_classifier:
 
             # Model 2
             tfidf_emo, selector_emo, nb_model_emo = models["with_emotion"]
-            emotion_scores_raw = emotion_classifier(user_text)[0]
+            # Truncate text for the emotion model to prevent token limit errors
+            truncated_text = user_text[:512]
+            emotion_scores_raw = emotion_classifier(truncated_text)[0]
             labels = ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"]
             scores_dict = {item['label']: item['score'] for item in emotion_scores_raw}
             emotion_features = np.array([scores_dict[l] for l in labels]).reshape(1, -1)
