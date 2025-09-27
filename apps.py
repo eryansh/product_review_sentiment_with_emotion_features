@@ -35,6 +35,11 @@ st.set_page_config(
     layout="wide",
 )
 
+# --- Initialize Session State for History ---
+if 'history' not in st.session_state:
+    st.session_state.history = []
+
+
 # --- Asset Loading ---
 @st.cache_resource
 def load_all_models():
@@ -232,6 +237,14 @@ if models and emotion_classifier:
     if submitted and user_text.strip():
         with st.spinner("Analyzing text..."):
             results = analyze_sentiment(user_text, models, emotion_classifier)
+        
+        # --- Store results in history (most recent first) ---
+        st.session_state.history.insert(0, {
+            "text": user_text,
+            "model1_pred": results["model1"]["prediction"],
+            "model2_pred": results["model2"]["prediction"],
+            "top_emotion": results["emotion"]["top"]
+        })
 
         st.divider()
         
@@ -271,11 +284,27 @@ if models and emotion_classifier:
                 
     elif submitted:
         st.warning("Please enter some text to analyze.")
+    
+    # --- ADDED HISTORY SECTION ---
+    st.divider()
+    st.markdown("## Analysis History")
+
+    if not st.session_state.history:
+        st.info("Your previous analyses in this session will appear here.")
+    else:
+        for i, entry in enumerate(st.session_state.history):
+            # Use a unique key for each expander
+            with st.expander(f"**{len(st.session_state.history) - i}.** {entry['text'][:70]}..."):
+                st.markdown(f"**Input Text:** _{entry['text']}_")
+                st.markdown(f"**Model 1 (Text Only Prediction):** `{entry['model1_pred']}`")
+                st.markdown(f"**Model 2 (Text + Emotion Prediction):** `{entry['model2_pred']}`")
+                st.markdown(f"**Detected Top Emotion:** `{entry['top_emotion'].capitalize()}`")
+
 
 else:
     st.error("Application could not start. Please check the model files and internet connection.")
 
-# --- ADDED CREDIT SECTION ---
+# --- CREDIT SECTION ---
 st.markdown("""
     <style>
         .footer {
@@ -294,4 +323,3 @@ st.markdown("""
         Model deployed by Heryanshah Bin Suhimi | This web application is for FYP research purposes only.
     </div>
 """, unsafe_allow_html=True)
-
