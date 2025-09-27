@@ -120,7 +120,7 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     }
 
 # --- UI Helper Functions ---
-def display_sentiment_result(prediction, confidence, is_uncertain):
+def display_sentiment_result(prediction, confidence, is_uncertain, **kwargs):
     """Displays the formatted sentiment result."""
     if is_uncertain: st.warning("Model is uncertain due to unrecognized input.")
     elif str(prediction).lower() == 'positive': st.success(f"**Positive** (Confidence: {confidence:.2%})")
