@@ -155,7 +155,7 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap');
     .main-title {
         font-family: 'Poppins', sans-serif;
-        font-size: 3.25rem;
+        font-size: 4.0rem;
         font-weight: 700;
         text-align: center;
         text-shadow: 2px 2px 5px rgba(0,0,0,0.3);
