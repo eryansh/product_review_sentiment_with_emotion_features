@@ -275,4 +275,22 @@ if models and emotion_classifier:
 else:
     st.error("Application could not start. Please check the model files and internet connection.")
 
-
+# --- ADDED CREDIT SECTION ---
+st.markdown("""
+    <style>
+        .footer {
+            position: fixed;
+            left: 0;
+            bottom: 0;
+            width: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            text-align: center;
+            padding: 10px;
+            font-size: 14px;
+        }
+    </style>
+    <div class="footer">
+        Model Deployed by: Heryanshah Bin Suhimi @Suhaimi
+    </div>
+""", unsafe_allow_html=True)
