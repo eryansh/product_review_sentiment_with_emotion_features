@@ -204,7 +204,7 @@ if models and emotion_classifier:
         
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("#### Model 1: Without Emotion Features")
+            st.markdown("#### Model 1: Textual Features")
             display_sentiment_result(**results["model1"])
             st.markdown("###### Sentiment Probability Comparison")
             prob_col1, prob_col2 = st.columns(2)
@@ -218,7 +218,7 @@ if models and emotion_classifier:
             st.info(results["comparison"]["text"])
 
         with col2:
-            st.markdown("#### Model 2: With Emotion Features")
+            st.markdown("#### Model 2: Textual + Emotion Features")
             display_sentiment_result(**results["model2"])
             if not results["model2"]["is_uncertain"]:
                 st.metric(
