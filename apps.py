@@ -213,7 +213,7 @@ if models and emotion_classifier:
             st.info(results["comparison"]["text"])
 
         with col2:
-            st.markdown("#### Model 2: Textual Integrated with Emotion Features")
+            st.markdown("#### Model 2: Textual Features Integrated with Emotion Features")
             display_sentiment_result(**results["model2"])
             if not results["model2"]["is_uncertain"]:
                 st.metric(
