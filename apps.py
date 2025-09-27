@@ -5,6 +5,7 @@ from scipy.sparse import hstack
 import numpy as np
 from transformers import pipeline
 import plotly.graph_objects as go
+import base64
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -12,6 +13,18 @@ st.set_page_config(
     page_icon="🤖",
     layout="wide", # Changed to 'wide' for a better comparison view
 )
+
+# --- Function to encode video for background ---
+@st.cache_data
+def get_video_as_base64(file):
+    """Reads a video file and returns it as a base64 encoded string."""
+    try:
+        with open(file, "rb") as f:
+            data = f.read()
+        return base64.b64encode(data).decode()
+    except FileNotFoundError:
+        st.error("Video file not found. Please make sure `background.mp4` is in the main directory.")
+        return None
 
 # --- Loading Your Pipeline Assets ---
 @st.cache_resource
@@ -56,9 +69,38 @@ def load_emotion_model():
         return None
 
 # --- UI and Logic ---
+
+# --- Video Background ---
+# Ensure you have a file named 'background.mp4' in the same folder as this script.
+video_base64 = get_video_as_base64("background.mp4")
+if video_base64:
+    st.markdown(
+        f"""
+        <style>
+        .stApp {{
+            background: transparent;
+        }}
+        #bg-video {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            z-index: -1;
+        }}
+        </style>
+        <video id="bg-video" autoplay loop muted>
+            <source src="data:video/mp4;base64,{video_base64}" type="video/mp4">
+        </video>
+        """,
+        unsafe_allow_html=True
+    )
+
+
 st.title("🤖 Sentiment Analysis Comparison")
 # You can replace this URL with a direct link to any image on the web.
-# st.image('https://gibion.ai/wp-content/uploads/2025/08/Person-shopping-online-with-a-facial-expression-recognition-interface-768x512.png')
+# st.image('https://placehold.co/1200x300/0E1117/FFFFFF?text=Sentiment+Analysis+Dashboard')
 st.markdown("Compare sentiment predictions from two models: one using text only, and another enriched with emotion features.")
 
 # Loading all necessary models
@@ -248,5 +290,4 @@ if models and emotion_classifier:
         st.warning("Please enter some text to analyze.")
 else:
     st.error("The application could not start because the models failed to load. Please check your model files and internet connection.")
-
 
