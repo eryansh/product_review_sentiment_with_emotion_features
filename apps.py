@@ -161,6 +161,7 @@ st.markdown("""
         text-shadow: 2px 2px 5px rgba(0,0,0,0.3);
         padding-top: 2rem;
         padding-bottom: 2rem;
+        text-transform: uppercase;
     }
     </style>
     <p class="main-title">Sentiment Classification of Text Reviews Enriched with J-Hartmann Emotion Features</p>
