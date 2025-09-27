@@ -180,7 +180,6 @@ if models and emotion_classifier:
         with st.spinner("Analyzing text..."):
             results = analyze_sentiment(user_text, models, emotion_classifier)
 
-        st.markdown(f"> **Original Text:** *{user_text}*")
         st.divider()
         
         col1, col2 = st.columns(2)
