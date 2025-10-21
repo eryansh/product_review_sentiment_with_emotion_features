@@ -33,6 +33,7 @@ if NLTK_DATA_DIR not in nltk.data.path:
 nltk.download('stopwords', download_dir=NLTK_DATA_DIR)
 nltk.download('punkt', download_dir=NLTK_DATA_DIR)
 nltk.download('wordnet', download_dir=NLTK_DATA_DIR)
+nltk.download('punkt_tab', download_dir=NLTK_DATA_DIR) # <--- ADD THIS LINE
 # --- END NEW SECTION ---
 
 # --- CONFIGURATION ---
@@ -427,6 +428,7 @@ st.markdown("""
         Model deployed by Heryanshah Bin Suhimi | This web application is for FYP research purposes only.
     </div>
 """, unsafe_allow_html=True)
+
 
 
 
