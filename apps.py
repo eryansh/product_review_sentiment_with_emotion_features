@@ -5,6 +5,28 @@ from scipy.sparse import hstack
 import numpy as np
 from transformers import pipeline
 import plotly.graph_objects as go
+import re  # <--- NEW IMPORT for text cleansing
+import nltk # <--- NEW IMPORT for text processing
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+from nltk.tokenize import word_tokenize
+
+# --- NLTK Resource Downloads (add this block) ---
+# This ensures the necessary NLTK data is available
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords')
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
+try:
+    nltk.data.find('corpora/wordnet')
+except LookupError:
+    nltk.download('wordnet')
+# --- END NEW SECTION ---
+
 
 # --- CONFIGURATION ---
 CONFIG = {
@@ -74,28 +96,78 @@ def load_emotion_model():
         st.error(f"Could not load the emotion model from Hugging Face. Please check the internet connection. Error: {e}")
         return None
 
+# --- NEW PREPROCESSING FUNCTION ---
+@st.cache_data  # Cache this computation
+def preprocess_text(text):
+    """
+    Applies the full preprocessing pipeline:
+    a. Cleansing (Lowercase, numbers, punctuation, HTML)
+    b. Tokenization
+    c. Stopword Removal
+    d. Lemmatization
+    """
+    # Initialize components
+    lemmatizer = WordNetLemmatizer()
+    stop_words = set(stopwords.words('english'))
+    
+    # a. Data Cleansing
+    text = re.sub(r'<[^>]+>', '', text)  # Remove HTML tags
+    text = re.sub(r'\d+', '', text)      # Remove numbers
+    text = re.sub(r'[^\w\s]', '', text) # Remove punctuation
+    text = text.lower()                 # Lowercasing
+    
+    # b. Tokenization
+    tokens = word_tokenize(text)
+    
+    processed_tokens = []
+    for word in tokens:
+        # c. Stopword Removal
+        if word not in stop_words:
+            # d. Lemmatization
+            processed_tokens.append(lemmatizer.lemmatize(word))
+            
+    # Return a single string, as TfidfVectorizer expects this
+    return ' '.join(processed_tokens)
+# --- END NEW FUNCTION ---
+
+
 # --- Analysis Logic ---
 def analyze_sentiment(user_text, models, emotion_classifier):
     """
     Performs sentiment and emotion analysis and returns all calculated results.
     This function separates the calculation logic from the display logic.
     """
+    
+    # --- NEW PREPROCESSING STEP ---
+    # Preprocess the text *only* for the Naive Bayes models
+    processed_text_for_nb = preprocess_text(user_text)
+    
     # --- Model 1: Without Emotion ---
     tfidf, selector, nb_model = models["without_emotion"]
-    text_tfidf = tfidf.transform([user_text])
+    
+    # --- MODIFIED LINE ---
+    # Use the *processed* text here
+    text_tfidf = tfidf.transform([processed_text_for_nb])
+    
     text_chi2 = selector.transform(text_tfidf)
     prediction_proba = nb_model.predict_proba(text_chi2)
     predicted_label = nb_model.classes_[np.argmax(prediction_proba)]
     
     # --- Model 2: With Emotion ---
     tfidf_emo, selector_emo, nb_model_emo = models["with_emotion"]
+    
+    # --- NO CHANGE HERE ---
+    # The emotion model *must* get the original, raw text
     truncated_text = user_text[:512]  # Truncate for RoBERTa model limit
     emotion_scores_raw = emotion_classifier(truncated_text)[0]
     
     scores_dict = {item['label']: item['score'] for item in emotion_scores_raw}
     emotion_features = np.array([scores_dict[l] for l in CONFIG["emotion_labels"]]).reshape(1, -1)
     
-    text_tfidf_emo = tfidf_emo.transform([user_text])
+    # --- MODIFIED LINE ---
+    # Use the *processed* text here as well
+    text_tfidf_emo = tfidf_emo.transform([processed_text_for_nb])
+    
     text_chi2_emo = selector_emo.transform(text_tfidf_emo)
     final_features = hstack([text_chi2_emo, emotion_features])
     prediction_proba_emo = nb_model_emo.predict_proba(final_features)
@@ -140,7 +212,8 @@ def analyze_sentiment(user_text, models, emotion_classifier):
         "model1": {"prediction": predicted_label, "confidence": confidence, "is_uncertain": is_uncertain1, "df": df_proba},
         "model2": {"prediction": predicted_label_emo, "confidence": confidence_emo, "is_uncertain": is_uncertain2, "df": df_proba_emo},
         "emotion": {"df": df_scores, "top": top_emotion},
-        "comparison": {"delta": confidence_delta, "text": interpretation_text}
+        "comparison": {"delta": confidence_delta, "text": interpretation_text},
+        "processed_text": processed_text_for_nb  # <--- NEWLY ADDED to return dict
     }
 
 # --- UI Helper Functions ---
@@ -248,6 +321,18 @@ if models and emotion_classifier:
 
         st.divider()
         
+        # --- NEW SECTION TO DISPLAY PROCESSED TEXT ---
+        with st.expander("Show Preprocessed Text (for Naive Bayes models)"):
+            st.markdown("**Original Text:**")
+            st.info(user_text)
+            st.markdown("**Processed Text (Input for Model 1 & 2):**")
+            # Display processed text, or a note if it's empty after processing
+            if results["processed_text"].strip():
+                st.success(results["processed_text"])
+            else:
+                st.warning("Text was empty after preprocessing (e.g., only contained stopwords or numbers).")
+        # --- END NEW SECTION ---
+        
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("#### Model 1: Textual Features Only")
@@ -281,7 +366,7 @@ if models and emotion_classifier:
             with sub_col2:
                 sorted_emotions = results["emotion"]["df"].sort_values('Score', ascending=True)
                 create_bar_chart(sorted_emotions, 'Emotion', 'Score', CONFIG["emotion_color_map"], 220, show_x_title=True)
-                
+            
     elif submitted:
         st.warning("Please enter some text to analyze.")
     
@@ -323,6 +408,3 @@ st.markdown("""
         Model deployed by Heryanshah Bin Suhimi | This web application is for FYP research purposes only.
     </div>
 """, unsafe_allow_html=True)
-
-
-
