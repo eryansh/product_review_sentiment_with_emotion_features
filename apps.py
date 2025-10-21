@@ -7,18 +7,33 @@ from transformers import pipeline
 import plotly.graph_objects as go
 import re  # <--- NEW IMPORT for text cleansing
 import nltk # <--- NEW IMPORT for text processing
+import os
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
 
-# --- NLTK Resource Downloads ---
-# We run these on every boot. NLTK is smart and won't re-download 
-# if the data is already present in the Streamlit Cloud environment.
-nltk.download('stopwords')
-nltk.download('punkt')
-nltk.download('wordnet')
-# --- END NEW SECTION ---
+# --- NLTK Resource Downloads (Robust Version) ---
+# This creates a local 'nltk_data' directory and forces NLTK to use it.
+# This is the most reliable method for Streamlit Cloud.
 
+# Get the directory of the current script
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+# Define the path for NLTK data
+NLTK_DATA_DIR = os.path.join(APP_DIR, "nltk_data")
+
+# Create the directory if it doesn't exist
+if not os.path.exists(NLTK_DATA_DIR):
+    os.makedirs(NLTK_DATA_DIR)
+
+# Add this path to NLTK's data path list
+if NLTK_DATA_DIR not in nltk.data.path:
+    nltk.data.path.append(NLTK_DATA_DIR)
+
+# Now, download the necessary packages to that specific directory
+nltk.download('stopwords', download_dir=NLTK_DATA_DIR)
+nltk.download('punkt', download_dir=NLTK_DATA_DIR)
+nltk.download('wordnet', download_dir=NLTK_DATA_DIR)
+# --- END NEW SECTION ---
 
 # --- CONFIGURATION ---
 CONFIG = {
@@ -400,5 +415,6 @@ st.markdown("""
         Model deployed by Heryanshah Bin Suhimi | This web application is for FYP research purposes only.
     </div>
 """, unsafe_allow_html=True)
+
 
 
