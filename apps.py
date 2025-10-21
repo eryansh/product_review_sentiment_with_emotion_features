@@ -116,6 +116,18 @@ def preprocess_text(text):
     # Initialize components
     lemmatizer = WordNetLemmatizer()
     stop_words = set(stopwords.words('english'))
+
+    # --- ADD THIS BLOCK ---
+    # This re-appends the path *inside* the cached function
+    # to ensure NLTK can find the data.
+    # NLTK_DATA_DIR is defined at the top of your script.
+    if NLTK_DATA_DIR not in nltk.data.path:
+        nltk.data.path.append(NLTK_DATA_DIR)
+    # --- END NEW BLOCK ---
+
+    # Initialize components
+    lemmatizer = WordNetLemmatizer()
+    stop_words = set(stopwords.words('english'))
     
     # a. Data Cleansing
     text = re.sub(r'<[^>]+>', '', text)  # Remove HTML tags
@@ -415,6 +427,7 @@ st.markdown("""
         Model deployed by Heryanshah Bin Suhimi | This web application is for FYP research purposes only.
     </div>
 """, unsafe_allow_html=True)
+
 
 
 
