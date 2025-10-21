@@ -11,20 +11,12 @@ from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
 
-# --- NLTK Resource Downloads (add this block) ---
-# This ensures the necessary NLTK data is available
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords')
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
-try:
-    nltk.data.find('corpora/wordnet')
-except LookupError:
-    nltk.download('wordnet')
+# --- NLTK Resource Downloads ---
+# We run these on every boot. NLTK is smart and won't re-download 
+# if the data is already present in the Streamlit Cloud environment.
+nltk.download('stopwords')
+nltk.download('punkt')
+nltk.download('wordnet')
 # --- END NEW SECTION ---
 
 
@@ -408,3 +400,4 @@ st.markdown("""
         Model deployed by Heryanshah Bin Suhimi | This web application is for FYP research purposes only.
     </div>
 """, unsafe_allow_html=True)
+
