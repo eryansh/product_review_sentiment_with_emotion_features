@@ -6,3 +6,11 @@ joblib
 transformers
 torch
 plotly
+streamlit
+pandas
+numpy
+plotly
+scikit-learn
+transformers
+torch
+nltk
