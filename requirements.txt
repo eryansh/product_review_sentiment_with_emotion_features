@@ -2,11 +2,8 @@ streamlit
 scikit-learn
 pandas
 scipy
-joblib
 transformers
 torch
 plotly
 numpy
-transformers
 nltk
-os
