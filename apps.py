@@ -5,7 +5,7 @@ from scipy.sparse import hstack
 import numpy as np
 from transformers import pipeline
 import plotly.graph_objects as go
-import re  # <--- NEW IMPORT for text cleansing
+import re  # <--- This line is now fixed
 import nltk # <--- NEW IMPORT for text processing
 import os
 from nltk.corpus import stopwords
@@ -107,7 +107,7 @@ def load_emotion_model():
         return None
 
 # --- NEW PREPROCESSING FUNCTION ---
-@st.cache_data  # Cache this computation
+@st.cache_data  # Cache this computation
 def preprocess_text(text):
     """
     Applies the full preprocessing pipeline:
@@ -129,10 +129,10 @@ def preprocess_text(text):
     stop_words = set(stopwords.words('english'))
     
     # a. Data Cleansing
-    text = re.sub(r'<[^>]+>', '', text)  # Remove HTML tags
-    text = re.sub(r'\d+', '', text)      # Remove numbers
+    text = re.sub(r'<[^>]+>', '', text)  # Remove HTML tags
+    text = re.sub(r'\d+', '', text)      # Remove numbers
     text = re.sub(r'[^\w\s]', '', text) # Remove punctuation
-    text = text.lower()                 # Lowercasing
+    text = text.lower()                  # Lowercasing
     
     # b. Tokenization
     tokens = word_tokenize(text)
