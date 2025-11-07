@@ -5,7 +5,7 @@ from scipy.sparse import hstack
 import numpy as np
 from transformers import pipeline
 import plotly.graph_objects as go
-import re  # <--- NEW IMPORT for text cleansing
+import re  # <--- NEW IMPORT for text cleansing
 import nltk # <--- NEW IMPORT for text processing
 import os
 from nltk.corpus import stopwords
@@ -17,7 +17,12 @@ from nltk.tokenize import word_tokenize
 # This is the most reliable method for Streamlit Cloud.
 
 # Get the directory of the current script
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+# Use a fallback for environments where __file__ isn't defined (like some notebooks)
+try:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    APP_DIR = os.getcwd()
+
 # Define the path for NLTK data
 NLTK_DATA_DIR = os.path.join(APP_DIR, "nltk_data")
 
@@ -39,15 +44,14 @@ nltk.download('punkt_tab', download_dir=NLTK_DATA_DIR) # <--- ADD THIS LINE
 # --- CONFIGURATION ---
 CONFIG = {
     "model_paths": {
+        "label_encoder": 'label_encoder.joblib', # <-- ADDED
         "without_emotion": {
-            "vectorizer": 'tfidf_vectorizer.joblib',
-            "selector": 'chi2_selector.joblib',
-            "model": 'naive_bayes_model.joblib'
+            # Point to the single XGBoost pipeline
+            "pipeline": 'xgb_model_condition1.joblib' 
         },
         "with_emotion": {
-            "vectorizer": 'tfidf_vectorizer_emo.joblib',
-            "selector": 'chi2_selector_emo.joblib',
-            "model": 'naive_bayes_model_emo.joblib'
+            # Point to the single XGBoost pipeline
+            "pipeline": 'xgb_model_condition2.joblib'
         }
     },
     "emotion_labels": ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"],
@@ -75,16 +79,14 @@ if 'history' not in st.session_state:
 def load_all_models():
     """Loads all joblib model files."""
     try:
+        # Load the new XGBoost pipelines and the LabelEncoder
         models = {
+            "label_encoder": joblib.load(CONFIG["model_paths"]["label_encoder"]),
             "without_emotion": (
-                joblib.load(CONFIG["model_paths"]["without_emotion"]["vectorizer"]),
-                joblib.load(CONFIG["model_paths"]["without_emotion"]["selector"]),
-                joblib.load(CONFIG["model_paths"]["without_emotion"]["model"])
+                joblib.load(CONFIG["model_paths"]["without_emotion"]["pipeline"])
             ),
             "with_emotion": (
-                joblib.load(CONFIG["model_paths"]["with_emotion"]["vectorizer"]),
-                joblib.load(CONFIG["model_paths"]["with_emotion"]["selector"]),
-                joblib.load(CONFIG["model_paths"]["with_emotion"]["model"])
+                joblib.load(CONFIG["model_paths"]["with_emotion"]["pipeline"])
             )
         }
         return models
@@ -105,7 +107,7 @@ def load_emotion_model():
         return None
 
 # --- NEW PREPROCESSING FUNCTION ---
-@st.cache_data  # Cache this computation
+@st.cache_data  # Cache this computation
 def preprocess_text(text):
     """
     Applies the full preprocessing pipeline:
@@ -114,10 +116,6 @@ def preprocess_text(text):
     c. Stopword Removal
     d. Lemmatization
     """
-    # Initialize components
-    lemmatizer = WordNetLemmatizer()
-    stop_words = set(stopwords.words('english'))
-
     # --- ADD THIS BLOCK ---
     # This re-appends the path *inside* the cached function
     # to ensure NLTK can find the data.
@@ -131,10 +129,10 @@ def preprocess_text(text):
     stop_words = set(stopwords.words('english'))
     
     # a. Data Cleansing
-    text = re.sub(r'<[^>]+>', '', text)  # Remove HTML tags
-    text = re.sub(r'\d+', '', text)      # Remove numbers
+    text = re.sub(r'<[^>]+>', '', text)  # Remove HTML tags
+    text = re.sub(r'\d+', '', text)      # Remove numbers
     text = re.sub(r'[^\w\s]', '', text) # Remove punctuation
-    text = text.lower()                 # Lowercasing
+    text = text.lower()                 # Lowercasing
     
     # b. Tokenization
     tokens = word_tokenize(text)
@@ -158,46 +156,64 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     This function separates the calculation logic from the display logic.
     """
     
-    # --- NEW PREPROCESSING STEP ---
-    # Preprocess the text *only* for the Naive Bayes models
-    processed_text_for_nb = preprocess_text(user_text)
+    # --- NEW: Get LabelEncoder ---
+    le = models["label_encoder"]
     
-    # --- Model 1: Without Emotion ---
-    tfidf, selector, nb_model = models["without_emotion"]
+    # --- Preprocessing Step ---
+    # We preprocess the text first, as the pipelines were trained on preprocessed text
+    processed_text = preprocess_text(user_text)
     
-    # --- MODIFIED LINE ---
-    # Use the *processed* text here
-    text_tfidf = tfidf.transform([processed_text_for_nb])
+    # --- Model 1: Without Emotion (XGBoost Pipeline) ---
+    # This single object contains TFIDF, Chi2, SMOTE, and XGB
+    pipeline_cond1 = models["without_emotion"]
     
-    text_chi2 = selector.transform(text_tfidf)
-    prediction_proba = nb_model.predict_proba(text_chi2)
-    predicted_label = nb_model.classes_[np.argmax(prediction_proba)]
+    # We call predict_proba on the single processed text string.
+    # The pipeline handles all vectorization and selection internally.
+    prediction_proba = pipeline_cond1.predict_proba([processed_text])
     
-    # --- Model 2: With Emotion ---
-    tfidf_emo, selector_emo, nb_model_emo = models["with_emotion"]
+    # Get the predicted class *index* (e.g., 0, 1, or 2)
+    predicted_index = np.argmax(prediction_proba)
+    # Convert the index back to the string label (e.g., 'Positive')
+    predicted_label = le.inverse_transform([predicted_index])[0]
     
-    # --- NO CHANGE HERE ---
-    # The emotion model *must* get the original, raw text
-    truncated_text = user_text[:512]  # Truncate for RoBERTa model limit
+    # --- Model 2: With Emotion (XGBoost Pipeline) ---
+    # This single object contains ColumnTransformer, Chi2, SMOTE, and XGB
+    pipeline_cond2 = models["with_emotion"]
+    
+    # --- Get emotion features (same as before) ---
+    truncated_text = user_text[:512] # Truncate for RoBERTa model limit
     emotion_scores_raw = emotion_classifier(truncated_text)[0]
     
     scores_dict = {item['label']: item['score'] for item in emotion_scores_raw}
     emotion_features = np.array([scores_dict[l] for l in CONFIG["emotion_labels"]]).reshape(1, -1)
     
-    # --- MODIFIED LINE ---
-    # Use the *processed* text here as well
-    text_tfidf_emo = tfidf_emo.transform([processed_text_for_nb])
+    # --- Create the DataFrame for the pipeline ---
+    # This pipeline was trained on a DataFrame, so we must build one
+    # that matches the training data structure.
     
-    text_chi2_emo = selector_emo.transform(text_tfidf_emo)
-    final_features = hstack([text_chi2_emo, emotion_features])
-    prediction_proba_emo = nb_model_emo.predict_proba(final_features)
-    predicted_label_emo = nb_model_emo.classes_[np.argmax(prediction_proba_emo)]
+    # Create a dictionary for the emotion features with the correct column names
+    emotion_data = {f"prob_{label}": score for label, score in zip(CONFIG["emotion_labels"], emotion_features[0])}
+    
+    data_dict = {
+        'final_preprocessed_text': [processed_text], 
+        **emotion_data
+    }
+    input_df = pd.DataFrame(data_dict)
+
+    # We call predict_proba on the DataFrame.
+    # The pipeline handles all feature extraction and selection.
+    prediction_proba_emo = pipeline_cond2.predict_proba(input_df)
+    
+    # Convert the index back to the string label
+    predicted_index_emo = np.argmax(prediction_proba_emo)
+    predicted_label_emo = le.inverse_transform([predicted_index_emo])[0]
     
     # --- DataFrames for Plotting ---
-    df_proba = pd.DataFrame({'Sentiment': nb_model.classes_, 'Probability': prediction_proba[0] * 100})
+    # Use le.classes_ to get the correct order ('Negative', 'Neutral', 'Positive')
+    df_proba = pd.DataFrame({'Sentiment': le.classes_, 'Probability': prediction_proba[0] * 100})
     df_proba = df_proba.set_index('Sentiment').reindex(CONFIG["sentiment_order"]).reset_index()
 
-    df_proba_emo = pd.DataFrame({'Sentiment': nb_model_emo.classes_, 'Probability': prediction_proba_emo[0] * 100})
+    df_proba_emo = pd.DataFrame({'Sentiment': le.classes_, 'Probability': prediction_proba_emo[0] * 100})
     df_proba_emo = df_proba_emo.set_index('Sentiment').reindex(CONFIG["sentiment_order"]).reset_index()
 
     df_scores = pd.DataFrame(emotion_scores_raw)
@@ -211,8 +227,9 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     is_uncertain1 = np.isclose(confidence, 1/3, atol=0.05)
     is_uncertain2 = np.isclose(confidence_emo, 1/3, atol=0.05)
     
-    predicted_class_index_emo = np.argmax(prediction_proba_emo)
-    confidence_from_model1 = prediction_proba[0][predicted_class_index_emo]
+    # Get the probability for the *same class* from the other model
+    # Note: Use predicted_index_emo (the index)
+    confidence_from_model1 = prediction_proba[0][predicted_index_emo]
     confidence_delta = confidence_emo - confidence_from_model1
 
     if is_uncertain1 or is_uncertain2:
@@ -233,7 +250,7 @@ def analyze_sentiment(user_text, models, emotion_classifier):
         "model2": {"prediction": predicted_label_emo, "confidence": confidence_emo, "is_uncertain": is_uncertain2, "df": df_proba_emo},
         "emotion": {"df": df_scores, "top": top_emotion},
         "comparison": {"delta": confidence_delta, "text": interpretation_text},
-        "processed_text": processed_text_for_nb  # <--- NEWLY ADDED to return dict
+        "processed_text": processed_text # <--- This is now the processed text
     }
 
 # --- UI Helper Functions ---
@@ -288,7 +305,7 @@ set_video_background()
 
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap');
+    @import url('httpsAF://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap');
     .main-title {
         font-family: 'tahoma', sans-serif;
         font-size: clamp(2.5rem, 8vw, 7rem); /* Responsive font size */
@@ -342,7 +359,7 @@ if models and emotion_classifier:
         st.divider()
         
         # --- NEW SECTION TO DISPLAY PROCESSED TEXT ---
-        with st.expander("Show Preprocessed Text (for Naive Bayes models)"):
+        with st.expander("Show Preprocessed Text (for XGBoost models)"):
             st.markdown("**Original Text:**")
             st.info(user_text)
             st.markdown("**Processed Text (Input for Model 1 & 2):**")
@@ -428,8 +445,3 @@ st.markdown("""
         Model deployed by Heryanshah Bin Suhimi | This web application is for FYP research purposes only.
     </div>
 """, unsafe_allow_html=True)
-
-
-
-
-
