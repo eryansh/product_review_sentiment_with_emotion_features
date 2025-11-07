@@ -44,7 +44,7 @@ nltk.download('punkt_tab', download_dir=NLTK_DATA_DIR) # <--- ADD THIS LINE
 # --- CONFIGURATION ---
 CONFIG = {
     "model_paths": {
-        "label_encoder": 'label_encoder.joblib', # <-- ADDED
+        "label_encoder": 'label_encoder.joblib', # <-- This is the new config
         "without_emotion": {
             # Point to the single XGBoost pipeline
             "pipeline": 'xgb_model_condition1.joblib' 
@@ -79,7 +79,7 @@ if 'history' not in st.session_state:
 def load_all_models():
     """Loads all joblib model files."""
     try:
-        # Load the new XGBoost pipelines and the LabelEncoder
+        # This function now loads the correct XGBoost pipeline files
         models = {
             "label_encoder": joblib.load(CONFIG["model_paths"]["label_encoder"]),
             "without_emotion": (
@@ -305,7 +305,7 @@ set_video_background()
 
 st.markdown("""
     <style>
-    @import url('httpsAF://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap');
     .main-title {
         font-family: 'tahoma', sans-serif;
         font-size: clamp(2.5rem, 8vw, 7rem); /* Responsive font size */
