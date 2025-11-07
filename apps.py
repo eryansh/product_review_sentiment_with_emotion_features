@@ -5,7 +5,7 @@ from scipy.sparse import hstack
 import numpy as np
 from transformers import pipeline
 import plotly.graph_objects as go
-import re  # <--- This line is now fixed
+import re  # <--- This line is fixed
 import nltk # <--- NEW IMPORT for text processing
 import os
 from nltk.corpus import stopwords
@@ -38,13 +38,13 @@ if NLTK_DATA_DIR not in nltk.data.path:
 nltk.download('stopwords', download_dir=NLTK_DATA_DIR)
 nltk.download('punkt', download_dir=NLTK_DATA_DIR)
 nltk.download('wordnet', download_dir=NLTK_DATA_DIR)
-nltk.download('punkt_tab', download_dir=NLTK_DATA_DIR) # <--- ADD THIS LINE
+nltk.download('punkt_tab', download_dir=NLTK_DATA_DIR) 
 # --- END NEW SECTION ---
 
 # --- CONFIGURATION ---
 CONFIG = {
     "model_paths": {
-        "label_encoder": 'label_encoder.joblib', # <-- This is the new config
+        # --- REMOVED 'label_encoder.joblib' ---
         "without_emotion": {
             # Point to the single XGBoost pipeline
             "pipeline": 'xgb_model_condition1.joblib' 
@@ -55,7 +55,8 @@ CONFIG = {
         }
     },
     "emotion_labels": ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"],
-    "sentiment_order": ['Negative', 'Neutral', 'Positive'],
+    # This list now replaces the LabelEncoder
+    "sentiment_order": ['Negative', 'Neutral', 'Positive'], 
     "hugging_face_model": "j-hartmann/emotion-english-distilroberta-base",
     "sentiment_color_map": {'Positive': '#22c55e', 'Negative': '#ef4444', 'Neutral': '#a1a1aa'},
     "emotion_color_map": {'sadness': '#3b82f6', 'joy': '#facc15', 'anger': '#ef4444', 'fear': '#a855f7', 'surprise': '#22d3ee', 'disgust': '#84cc16', 'neutral': '#a1a1aa'}
@@ -79,9 +80,8 @@ if 'history' not in st.session_state:
 def load_all_models():
     """Loads all joblib model files."""
     try:
-        # This function now loads the correct XGBoost pipeline files
+        # --- REMOVED 'label_encoder.joblib' from loading ---
         models = {
-            "label_encoder": joblib.load(CONFIG["model_paths"]["label_encoder"]),
             "without_emotion": (
                 joblib.load(CONFIG["model_paths"]["without_emotion"]["pipeline"])
             ),
@@ -156,8 +156,7 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     This function separates the calculation logic from the display logic.
     """
     
-    # --- NEW: Get LabelEncoder ---
-    le = models["label_encoder"]
+    # --- REMOVED: Get LabelEncoder ---
     
     # --- Preprocessing Step ---
     # We preprocess the text first, as the pipelines were trained on preprocessed text
@@ -173,8 +172,8 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     
     # Get the predicted class *index* (e.g., 0, 1, or 2)
     predicted_index = np.argmax(prediction_proba)
-    # Convert the index back to the string label (e.g., 'Positive')
-    predicted_label = le.inverse_transform([predicted_index])[0]
+    # --- MODIFIED: Convert index to label using config list ---
+    predicted_label = CONFIG["sentiment_order"][predicted_index]
     
     # --- Model 2: With Emotion (XGBoost Pipeline) ---
     # This single object contains ColumnTransformer, Chi2, SMOTE, and XGB
@@ -206,14 +205,15 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     
     # Convert the index back to the string label
     predicted_index_emo = np.argmax(prediction_proba_emo)
-    predicted_label_emo = le.inverse_transform([predicted_index_emo])[0]
+    # --- MODIFIED: Convert index to label using config list ---
+    predicted_label_emo = CONFIG["sentiment_order"][predicted_index_emo]
     
     # --- DataFrames for Plotting ---
-    # Use le.classes_ to get the correct order ('Negative', 'Neutral', 'Positive')
-    df_proba = pd.DataFrame({'Sentiment': le.classes_, 'Probability': prediction_proba[0] * 100})
+    # --- MODIFIED: Use config list for labels ---
+    df_proba = pd.DataFrame({'Sentiment': CONFIG["sentiment_order"], 'Probability': prediction_proba[0] * 100})
     df_proba = df_proba.set_index('Sentiment').reindex(CONFIG["sentiment_order"]).reset_index()
 
-    df_proba_emo = pd.DataFrame({'Sentiment': le.classes_, 'Probability': prediction_proba_emo[0] * 100})
+    df_proba_emo = pd.DataFrame({'Sentiment': CONFIG["sentiment_order"], 'Probability': prediction_proba_emo[0] * 100})
     df_proba_emo = df_proba_emo.set_index('Sentiment').reindex(CONFIG["sentiment_order"]).reset_index()
 
     df_scores = pd.DataFrame(emotion_scores_raw)
@@ -305,7 +305,7 @@ set_video_background()
 
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@700&display=swap');
+    @import url('https.googleapis.com/css2?family=Poppins:wght@700&display=swap');
     .main-title {
         font-family: 'tahoma', sans-serif;
         font-size: clamp(2.5rem, 8vw, 7rem); /* Responsive font size */
