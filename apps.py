@@ -41,14 +41,16 @@ def load_models():
     try:
         models = {}
         
-        # 1. Load Text-Only Model
+        # 1. Load Text-Only Model (Added from_tf=True fix here)
         models["without_emotion"] = pipeline(
             "text-classification", 
             model=CONFIG["model_names"]["without_emotion"], 
-            return_all_scores=True  # Important to get probabilities for all classes
+            return_all_scores=True,
+            model_kwargs={"from_tf": True} # <--- FIX APPLIED HERE
         )
         
         # 2. Load Text + Emotion Model
+        # Note: If this model is also TensorFlow only, add model_kwargs={"from_tf": True} here too.
         models["with_emotion"] = pipeline(
             "text-classification", 
             model=CONFIG["model_names"]["with_emotion"], 
