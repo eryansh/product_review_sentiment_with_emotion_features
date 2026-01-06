@@ -9,3 +9,4 @@ numpy
 nltk
 imbalanced-learn
 xgboost
+langdetect
