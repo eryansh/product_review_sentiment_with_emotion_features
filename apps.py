@@ -11,57 +11,53 @@ import os
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
-from langdetect import detect, LangDetectException # <--- NEW IMPORT
+from langdetect import detect, LangDetectException
 
 # --- NLTK Resource Downloads (Robust Version) ---
 # This creates a local 'nltk_data' directory and forces NLTK to use it.
-# This is the most reliable method for Streamlit Cloud.
-
-# Get the directory of the current script
-# Use a fallback for environments where __file__ isn't defined (like some notebooks)
 try:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
 except NameError:
     APP_DIR = os.getcwd()
 
-# Define the path for NLTK data
 NLTK_DATA_DIR = os.path.join(APP_DIR, "nltk_data")
 
-# Create the directory if it doesn't exist
 if not os.path.exists(NLTK_DATA_DIR):
     os.makedirs(NLTK_DATA_DIR)
 
-# Add this path to NLTK's data path list
 if NLTK_DATA_DIR not in nltk.data.path:
     nltk.data.path.append(NLTK_DATA_DIR)
 
-# Now, download the necessary packages to that specific directory
 nltk.download('stopwords', download_dir=NLTK_DATA_DIR)
 nltk.download('punkt', download_dir=NLTK_DATA_DIR)
 nltk.download('wordnet', download_dir=NLTK_DATA_DIR)
 nltk.download('punkt_tab', download_dir=NLTK_DATA_DIR) 
-# --- END NEW SECTION ---
+# --- END NLTK SECTION ---
 
 # --- CONFIGURATION ---
 CONFIG = {
     "model_paths": {
-        "without_emotion": {
-            # Point to the single XGBoost pipeline
-            "pipeline": 'xgb_model_condition1.joblib' 
-        },
-        "with_emotion": {
-            # Point to the single XGBoost pipeline
-            "pipeline": 'xgb_model_condition2.joblib'
-        }
+        "without_emotion": { "pipeline": 'xgb_model_condition1.joblib' },
+        "with_emotion": { "pipeline": 'xgb_model_condition2.joblib' }
     },
     "emotion_labels": ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"],
-    # This list now replaces the LabelEncoder
     "sentiment_order": ['Negative', 'Neutral', 'Positive'], 
     "hugging_face_model": "j-hartmann/emotion-english-distilroberta-base",
     "sentiment_color_map": {'Positive': '#22c55e', 'Negative': '#ef4444', 'Neutral': '#a1a1aa'},
     "emotion_color_map": {'sadness': '#3b82f6', 'joy': '#facc15', 'anger': '#ef4444', 'fear': '#a855f7', 'surprise': '#22d3ee', 'disgust': '#84cc16', 'neutral': '#a1a1aa'}
 }
 
+# --- LIST OF DEMO SCENARIOS ---
+demo_options = {
+    "Select an example...": "",
+    "Standard Positive": "The battery life of this phone is amazing, I'm so happy with my purchase!",
+    "Standard Negative": "Terrible service. The package arrived late and the item was broken.",
+    "Sarcastic (Tricky)": "Oh great, another update that breaks everything. Just what I needed!",
+    "Mixed Feelings": "I love the camera quality, but the battery drains way too fast.",
+    "Short/Slang": "Omg best purchase everrr! <3",
+    "Ambiguous/Neutral": "The product arrived on Tuesday. It is blue.",
+    "Non-English (Language Check)": "Barang ini sangat bagus dan berkualiti tinggi."
+}
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -70,10 +66,11 @@ st.set_page_config(
     layout="wide",
 )
 
-# --- Initialize Session State for History ---
+# --- Initialize Session State ---
 if 'history' not in st.session_state:
     st.session_state.history = []
-
+if 'user_input' not in st.session_state:
+    st.session_state.user_input = "The battery life of this phone is amazing, I'm so happy with my purchase!"
 
 # --- Asset Loading ---
 @st.cache_resource
@@ -81,12 +78,8 @@ def load_all_models():
     """Loads all joblib model files."""
     try:
         models = {
-            "without_emotion": (
-                joblib.load(CONFIG["model_paths"]["without_emotion"]["pipeline"])
-            ),
-            "with_emotion": (
-                joblib.load(CONFIG["model_paths"]["with_emotion"]["pipeline"])
-            )
+            "without_emotion": joblib.load(CONFIG["model_paths"]["without_emotion"]["pipeline"]),
+            "with_emotion": joblib.load(CONFIG["model_paths"]["with_emotion"]["pipeline"])
         }
         return models
     except FileNotFoundError as e:
@@ -105,100 +98,51 @@ def load_emotion_model():
         st.error(f"Could not load the emotion model from Hugging Face. Please check the internet connection. Error: {e}")
         return None
 
-# --- NEW PREPROCESSING FUNCTION ---
-@st.cache_data  # Cache this computation
+# --- Preprocessing Function ---
+@st.cache_data
 def preprocess_text(text):
-    """
-    Applies the full preprocessing pipeline:
-    a. Cleansing (Lowercase, numbers, punctuation, HTML)
-    b. Tokenization
-    c. Stopword Removal
-    d. Lemmatization
-    """
-    # This re-appends the path *inside* the cached function
-    # to ensure NLTK can find the data.
     if NLTK_DATA_DIR not in nltk.data.path:
         nltk.data.path.append(NLTK_DATA_DIR)
 
-    # Initialize components
     lemmatizer = WordNetLemmatizer()
     stop_words = set(stopwords.words('english'))
     
-    # a. Data Cleansing
-    text = re.sub(r'<[^>]+>', '', text)  # Remove HTML tags
-    text = re.sub(r'\d+', '', text)      # Remove numbers
-    text = re.sub(r'[^\w\s]', '', text) # Remove punctuation
-    text = text.lower()                  # Lowercasing
+    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r'\d+', '', text)
+    text = re.sub(r'[^\w\s]', '', text)
+    text = text.lower()
     
-    # b. Tokenization
     tokens = word_tokenize(text)
-    
-    processed_tokens = []
-    for word in tokens:
-        # c. Stopword Removal
-        if word not in stop_words:
-            # d. Lemmatization
-            processed_tokens.append(lemmatizer.lemmatize(word))
+    processed_tokens = [lemmatizer.lemmatize(word) for word in tokens if word not in stop_words]
             
-    # Return a single string, as TfidfVectorizer expects this
     return ' '.join(processed_tokens)
 
 
 # --- Analysis Logic ---
 def analyze_sentiment(user_text, models, emotion_classifier):
-    """
-    Performs sentiment and emotion analysis and returns all calculated results.
-    This function separates the calculation logic from the display logic.
-    """
-    
-    # --- Preprocessing Step ---
-    # We preprocess the text first, as the pipelines were trained on preprocessed text
     processed_text = preprocess_text(user_text)
     
-    # --- Model 1: Without Emotion (XGBoost Pipeline) ---
-    # This single object contains TFIDF, Chi2, SMOTE, and XGB
+    # --- Model 1: Without Emotion ---
     pipeline_cond1 = models["without_emotion"]
-    
-    # We call predict_proba on the single processed text string.
-    # The pipeline handles all vectorization and selection internally.
     prediction_proba = pipeline_cond1.predict_proba([processed_text])
-    
-    # Get the predicted class *index* (e.g., 0, 1, or 2)
     predicted_index = np.argmax(prediction_proba)
-    # Convert index to label using config list
     predicted_label = CONFIG["sentiment_order"][predicted_index]
     
-    # --- Model 2: With Emotion (XGBoost Pipeline) ---
-    # This single object contains ColumnTransformer, Chi2, SMOTE, and XGB
+    # --- Model 2: With Emotion ---
     pipeline_cond2 = models["with_emotion"]
-    
-    # --- Get emotion features (same as before) ---
-    truncated_text = user_text[:512] # Truncate for RoBERTa model limit
+    truncated_text = user_text[:512]
     emotion_scores_raw = emotion_classifier(truncated_text)[0]
     
     scores_dict = {item['label']: item['score'] for item in emotion_scores_raw}
     emotion_features = np.array([scores_dict[l] for l in CONFIG["emotion_labels"]]).reshape(1, -1)
     
-    # --- Create the DataFrame for the pipeline ---
-    # This pipeline was trained on a DataFrame, so we must build one
-    # that matches the training data structure.
-    
-    # Create a dictionary for the emotion features with the correct column names
     emotion_data = {f"prob_{label}": score for label, score in zip(CONFIG["emotion_labels"], emotion_features[0])}
     
-    data_dict = {
-        'final_preprocessed_text': [processed_text], 
-        **emotion_data
-    }
+    data_dict = {'final_preprocessed_text': [processed_text], **emotion_data}
     input_df = pd.DataFrame(data_dict)
 
-    # We call predict_proba on the DataFrame.
-    # The pipeline handles all feature extraction and selection.
     prediction_proba_emo = pipeline_cond2.predict_proba(input_df)
-    
-    # Convert the index back to the string label
     predicted_index_emo = np.argmax(prediction_proba_emo)
-    # Convert index to label using config list
     predicted_label_emo = CONFIG["sentiment_order"][predicted_index_emo]
     
     # --- DataFrames for Plotting ---
@@ -213,14 +157,12 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     df_scores['Score'] = df_scores['Score'] * 100
     top_emotion = df_scores.loc[df_scores['Score'].idxmax()]['Emotion']
 
-    # --- Interpretation & Comparison ---
+    # --- Interpretation ---
     confidence = np.max(prediction_proba)
     confidence_emo = np.max(prediction_proba_emo)
     is_uncertain1 = np.isclose(confidence, 1/3, atol=0.05)
     is_uncertain2 = np.isclose(confidence_emo, 1/3, atol=0.05)
     
-    # Get the probability for the *same class* from the other model
-    # Note: Use predicted_index_emo (the index)
     confidence_from_model1 = prediction_proba[0][predicted_index_emo]
     confidence_delta = confidence_emo - confidence_from_model1
 
@@ -247,14 +189,12 @@ def analyze_sentiment(user_text, models, emotion_classifier):
 
 # --- UI Helper Functions ---
 def display_sentiment_result(prediction, confidence, is_uncertain, **kwargs):
-    """Displays the formatted sentiment result."""
     if is_uncertain: st.warning("Model is uncertain due to unrecognized input.")
     elif str(prediction).lower() == 'positive': st.success(f"**Positive** (Confidence: {confidence:.2%})")
     elif str(prediction).lower() == 'negative': st.error(f"**Negative** (Confidence: {confidence:.2%})")
     else: st.info(f"**Neutral** (Confidence: {confidence:.2%})")
 
 def create_bar_chart(df, y_col, x_col, color_map, height, show_x_title=False):
-    """Creates a generic horizontal bar chart for sentiment or emotion."""
     fig = go.Figure()
     for _, row in df.iterrows():
         fig.add_trace(go.Bar(
@@ -266,8 +206,7 @@ def create_bar_chart(df, y_col, x_col, color_map, height, show_x_title=False):
         ))
     
     xaxis_config = dict(range=[0, 100], showgrid=False)
-    if show_x_title:
-        xaxis_config['title'] = "Score (%)"
+    if show_x_title: xaxis_config['title'] = "Score (%)"
         
     fig.update_layout(
         showlegend=False,
@@ -282,7 +221,6 @@ def create_bar_chart(df, y_col, x_col, color_map, height, show_x_title=False):
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 def set_video_background():
-    """Injects HTML for a video background."""
     video_url = "https://raw.githubusercontent.com/eryansh/product_review_sentiment_with_emotion_features/main/background.mp4"
     st.markdown(f"""
         <style>
@@ -292,7 +230,7 @@ def set_video_background():
         <video id="bg-video" autoplay loop muted><source src="{video_url}" type="video/mp4"></video>
         """, unsafe_allow_html=True)
 
-# --- Main App ---
+# --- Main App Execution ---
 set_video_background()
 
 st.markdown("""
@@ -300,7 +238,7 @@ st.markdown("""
     @import url('https.googleapis.com/css2?family=Poppins:wght@700&display=swap');
     .main-title {
         font-family: 'tahoma', sans-serif;
-        font-size: clamp(2.5rem, 8vw, 7rem); /* Responsive font size */
+        font-size: clamp(2.5rem, 8vw, 7rem);
         font-weight: 700;
         text-align: center;
         text-shadow: 2px 2px 5px rgba(0,0,0,0.3);
@@ -332,26 +270,45 @@ if models and emotion_classifier:
         </script>
     """, unsafe_allow_html=True)
 
+    # --- FEATURE: Demo Selector ---
+    def update_text_area():
+        selected_example = st.session_state.example_selector
+        if selected_example and demo_options[selected_example]:
+            st.session_state.user_input = demo_options[selected_example]
+
+    st.markdown("### 🧪 Test Scenarios")
+    st.selectbox(
+        "Choose a pre-defined review to test:",
+        options=list(demo_options.keys()),
+        key="example_selector",
+        on_change=update_text_area,
+        index=0
+    )
+
     with st.form("sentiment_form"):
-        user_text = st.text_area("Enter review text here:", "The battery life of this phone is amazing, I'm so happy with my purchase!")
+        user_text = st.text_area("Enter review text here:", key="user_input")
         submitted = st.form_submit_button("Predict Sentiment")
 
     if submitted and user_text.strip():
         
-        # --- NEW: Language Detection ---
+        # --- FEATURE: Language Detection ---
         try:
             detected_lang = detect(user_text)
             if detected_lang != 'en':
                 st.warning(f"⚠️ **Warning:** The detected language is **'{detected_lang}'**. This model is trained on English data and may produce inaccurate results for non-English reviews.")
         except LangDetectException:
-            # This happens if the text is too short or just numbers/symbols
-            st.warning("⚠️ **Warning:** Could not detect the language. If this is not English, the results may be inaccurate.")
-        # --- END NEW SECTION ---
+            st.warning("⚠️ **Warning:** Could not detect the language. Results may be inaccurate.")
 
         with st.spinner("Analyzing text..."):
             results = analyze_sentiment(user_text, models, emotion_classifier)
         
-        # --- Store results in history (most recent first) ---
+        # --- FEATURE: Visual Effects ---
+        if results["model2"]["prediction"] == 'Positive' and results["model2"]["confidence"] > 0.85:
+            st.balloons()
+        elif results["model2"]["prediction"] == 'Negative' and results["model2"]["confidence"] > 0.85:
+            st.snow()
+
+        # --- Store History ---
         st.session_state.history.insert(0, {
             "text": user_text,
             "model1_pred": results["model1"]["prediction"],
@@ -361,18 +318,17 @@ if models and emotion_classifier:
 
         st.divider()
         
-        # --- SECTION TO DISPLAY PROCESSED TEXT ---
+        # --- Preprocessed Text Debugger ---
         with st.expander("Show Preprocessed Text (for XGBoost models)"):
             st.markdown("**Original Text:**")
             st.info(user_text)
             st.markdown("**Processed Text (Input for Model 1 & 2):**")
-            # Display processed text, or a note if it's empty after processing
             if results["processed_text"].strip():
                 st.success(results["processed_text"])
             else:
-                st.warning("Text was empty after preprocessing (e.g., only contained stopwords or numbers).")
-        # --- END SECTION ---
+                st.warning("Text was empty after preprocessing.")
         
+        # --- Results Columns ---
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("#### Model 1: Textual Features Only")
@@ -410,7 +366,7 @@ if models and emotion_classifier:
     elif submitted:
         st.warning("Please enter some text to analyze.")
     
-    # --- HISTORY SECTION ---
+    # --- History Section ---
     st.divider()
     st.markdown("## Analysis History")
 
@@ -418,18 +374,16 @@ if models and emotion_classifier:
         st.info("Your previous analyses in this session will appear here.")
     else:
         for i, entry in enumerate(st.session_state.history):
-            # Use a unique key for each expander
             with st.expander(f"**{len(st.session_state.history) - i}.** {entry['text'][:70]}..."):
                 st.markdown(f"**Input Text:** _{entry['text']}_")
                 st.markdown(f"**Model 1 (Text Only Prediction):** `{entry['model1_pred']}`")
                 st.markdown(f"**Model 2 (Text + Emotion Prediction):** `{entry['model2_pred']}`")
                 st.markdown(f"**Detected Top Emotion:** `{entry['top_emotion'].capitalize()}`")
 
-
 else:
     st.error("Application could not start. Please check the model files and internet connection.")
 
-# --- CREDIT SECTION ---
+# --- Footer ---
 st.markdown("""
     <style>
         .footer {
