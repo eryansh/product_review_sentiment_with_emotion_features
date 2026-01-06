@@ -1,11 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
+from transformers import pipeline, AutoTokenizer, TFAutoModelForSequenceClassification
 import plotly.graph_objects as go
-import re
 import os
-import torch
 
 # --- CONFIGURATION ---
 CONFIG = {
@@ -15,12 +13,10 @@ CONFIG = {
         "emotion_detector": "j-hartmann/emotion-english-distilroberta-base"
     },
     "emotion_labels": ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"],
-    # Ensure these match the labels your DeBERTa models were trained on (Case Sensitive)
     "sentiment_order": ['Negative', 'Neutral', 'Positive'], 
     "sentiment_color_map": {'Positive': '#22c55e', 'Negative': '#ef4444', 'Neutral': '#a1a1aa'},
     "emotion_color_map": {'sadness': '#3b82f6', 'joy': '#facc15', 'anger': '#ef4444', 'fear': '#a855f7', 'surprise': '#22d3ee', 'disgust': '#84cc16', 'neutral': '#a1a1aa'}
 }
-
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -33,40 +29,54 @@ st.set_page_config(
 if 'history' not in st.session_state:
     st.session_state.history = []
 
-
 # --- Asset Loading ---
 @st.cache_resource
 def load_models():
-    """Loads all Hugging Face pipelines."""
+    """Loads models explicitly using TensorFlow classes to avoid path/config errors."""
     try:
         models = {}
         
-        # 1. Load Text-Only Model (Added from_tf=True fix here)
+        # 1. Load Text-Only Model (TensorFlow)
+        st.toast("Loading Model 1 (Text-Only)...", icon="⏳")
+        name_1 = CONFIG["model_names"]["without_emotion"]
+        tokenizer_1 = AutoTokenizer.from_pretrained(name_1)
+        model_1 = TFAutoModelForSequenceClassification.from_pretrained(name_1)
+        
         models["without_emotion"] = pipeline(
             "text-classification", 
-            model=CONFIG["model_names"]["without_emotion"], 
-            return_all_scores=True,
-            model_kwargs={"from_tf": True} # <--- FIX APPLIED HERE
+            model=model_1, 
+            tokenizer=tokenizer_1,
+            return_all_scores=True
         )
         
-        # 2. Load Text + Emotion Model
-        # Note: If this model is also TensorFlow only, add model_kwargs={"from_tf": True} here too.
+        # 2. Load Text + Emotion Model (TensorFlow)
+        # We assume this is also a TF model. If this fails, it might be PyTorch.
+        st.toast("Loading Model 2 (With Emotion)...", icon="⏳")
+        name_2 = CONFIG["model_names"]["with_emotion"]
+        tokenizer_2 = AutoTokenizer.from_pretrained(name_2)
+        model_2 = TFAutoModelForSequenceClassification.from_pretrained(name_2)
+        
         models["with_emotion"] = pipeline(
             "text-classification", 
-            model=CONFIG["model_names"]["with_emotion"], 
+            model=model_2, 
+            tokenizer=tokenizer_2,
             return_all_scores=True 
         )
         
-        # 3. Load Emotion Detector (for UI and feature extraction if needed)
+        # 3. Load Emotion Detector (Standard/PyTorch)
+        # This is a public model which is usually PyTorch-based, so we let pipeline handle it automatically.
+        st.toast("Loading Emotion Detector...", icon="⏳")
         models["emotion_classifier"] = pipeline(
             "text-classification", 
             model=CONFIG["model_names"]["emotion_detector"], 
             return_all_scores=True
         )
         
+        st.toast("All models loaded successfully!", icon="✅")
         return models
+        
     except Exception as e:
-        st.error(f"Error loading models from Hugging Face. Please check your internet connection or model names. Details: {e}")
+        st.error(f"Error loading models. Please check if 'tf-keras' is installed. Details: {e}")
         return None
 
 # --- Analysis Logic ---
@@ -76,7 +86,7 @@ def analyze_sentiment(user_text, models):
     """
     
     # --- 1. Detect Emotion (Feature Extraction) ---
-    truncated_text = user_text[:512] # Limit for RoBERTa
+    truncated_text = user_text[:512] 
     emotion_scores_raw = models["emotion_classifier"](truncated_text)[0]
     
     # Process emotion scores for visualization
@@ -86,16 +96,10 @@ def analyze_sentiment(user_text, models):
     top_emotion = df_scores.loc[df_scores['Score'].idxmax()]['Emotion']
     
     # --- 2. Model 1 Prediction (Text Only) ---
-    # DeBERTa Text-Only Inference
     pred_raw_1 = models["without_emotion"](user_text[:512])[0]
     
     # --- 3. Model 2 Prediction (Text + Emotion) ---
-    # NOTE: If your Model 2 was trained to expect the emotion label concatenated 
-    # (e.g. "Joy [SEP] Text"), uncomment the lines below:
-    
-    # input_text_model_2 = f"{top_emotion} {user_text}" 
-    input_text_model_2 = user_text # Default: Passing raw text assuming internal handling or implicit training
-    
+    input_text_model_2 = user_text 
     pred_raw_2 = models["with_emotion"](input_text_model_2[:512])[0]
     
     # --- Helper to process HF Pipeline Output into standard format ---
@@ -103,11 +107,8 @@ def analyze_sentiment(user_text, models):
         # Convert to dictionary {Label: Score}
         scores = {item['label']: item['score'] for item in raw_output}
         
-        # Normalize/Map labels if necessary (e.g., if model returns LABEL_0, LABEL_1)
-        # Assuming models return 'Negative', 'Neutral', 'Positive' directly.
-        # If they return LABEL_0/1/2, we map them based on CONFIG["sentiment_order"]
+        # Handle LABEL_0, LABEL_1 mappings if necessary
         if 'LABEL_0' in scores:
-             # Create mapping assuming 0=Negative, 1=Neutral, 2=Positive (Check your training config!)
              mapped_scores = {}
              for i, label in enumerate(CONFIG["sentiment_order"]):
                  key = f"LABEL_{i}"
@@ -131,12 +132,10 @@ def analyze_sentiment(user_text, models):
     pred_label_2, conf_2, df_2 = process_hf_output(pred_raw_2)
 
     # --- Interpretation & Comparison ---
-    # Check for uncertainty (if confidence is low, e.g., < 40%)
     is_uncertain1 = conf_1 < 0.40
     is_uncertain2 = conf_2 < 0.40
     
-    # Calculate Delta (Difference in confidence for Model 2's prediction compared to Model 1)
-    # We find Model 1's score for the class that Model 2 predicted
+    # Calculate Delta
     row_match = df_1[df_1['Sentiment'] == pred_label_2]
     score_from_model1 = row_match['Probability'].values[0] / 100 if not row_match.empty else 0
     confidence_delta = conf_2 - score_from_model1
@@ -145,7 +144,7 @@ def analyze_sentiment(user_text, models):
     if is_uncertain1 or is_uncertain2:
         interpretation_text = "The model is **uncertain** (low confidence)."
     elif pred_label_1.lower() != pred_label_2.lower():
-        interpretation_text = f"The models **disagree**. The Text-Only model sees **{pred_label_1}**, but with Emotion features/training, it shifts to **{pred_label_2}**."
+        interpretation_text = f"The models **disagree**. The Text-Only model sees **{pred_label_1}**, but with Emotion features, it shifts to **{pred_label_2}**."
     else:
         interpretation_text = f"Both models **agree** on **{pred_label_1}**."
 
@@ -158,14 +157,12 @@ def analyze_sentiment(user_text, models):
 
 # --- UI Helper Functions ---
 def display_sentiment_result(prediction, confidence, is_uncertain, **kwargs):
-    """Displays the formatted sentiment result."""
     if is_uncertain: st.warning("Uncertain")
     elif str(prediction).lower() == 'positive': st.success(f"**Positive** ({confidence:.2%})")
     elif str(prediction).lower() == 'negative': st.error(f"**Negative** ({confidence:.2%})")
     else: st.info(f"**Neutral** ({confidence:.2%})")
 
 def create_bar_chart(df, y_col, x_col, color_map, height, show_x_title=False):
-    """Creates a generic horizontal bar chart."""
     fig = go.Figure()
     for _, row in df.iterrows():
         fig.add_trace(go.Bar(
@@ -193,7 +190,6 @@ def create_bar_chart(df, y_col, x_col, color_map, height, show_x_title=False):
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 def set_video_background():
-    """Injects HTML for a video background."""
     video_url = "https://raw.githubusercontent.com/eryansh/product_review_sentiment_with_emotion_features/main/background.mp4"
     st.markdown(f"""
         <style>
@@ -226,7 +222,7 @@ st.markdown("""
 models = load_models()
 
 if models:
-    # Auto-expanding text area logic
+    # Auto-expanding text area
     st.markdown("""
         <style> textarea[aria-label="Enter review text here:"] { resize: none; overflow-y: hidden; } </style>
         <script>
@@ -251,7 +247,6 @@ if models:
         with st.spinner("Processing with DeBERTa models..."):
             results = analyze_sentiment(user_text, models)
         
-        # --- Store results in history ---
         st.session_state.history.insert(0, {
             "text": user_text,
             "model1_pred": results["model1"]["prediction"],
@@ -293,7 +288,6 @@ if models:
                 st.markdown(f"<div style='text-align: center; font-size: 2.5rem;'>{emotion_map.get(top_emo,'❓')}</div>", unsafe_allow_html=True)
                 st.caption(top_emo.capitalize())
             with e_col2:
-                # Show top 3 emotions only to save space
                 top_3_emotions = results["emotion"]["df"].sort_values('Score', ascending=False).head(3)
                 create_bar_chart(top_3_emotions, 'Emotion', 'Score', CONFIG["emotion_color_map"], 120, show_x_title=True)
             
@@ -310,8 +304,8 @@ if models:
         for i, entry in enumerate(st.session_state.history):
             with st.expander(f"**{len(st.session_state.history) - i}.** {entry['text'][:70]}..."):
                 st.markdown(f"**Input:** _{entry['text']}_")
-                st.markdown(f"**Text-Only Model:** `{entry['model1_pred']}` | **Text+Emotion Model:** `{entry['model2_pred']}`")
-                st.markdown(f"**Context:** Detected `{entry['top_emotion']}`")
+                st.markdown(f"**Text-Only:** `{entry['model1_pred']}` | **Text+Emotion:** `{entry['model2_pred']}`")
+                st.markdown(f"**Emotion:** `{entry['top_emotion']}`")
 
 else:
     st.error("Application could not start. Please check the model files and internet connection.")
