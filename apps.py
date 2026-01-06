@@ -5,12 +5,13 @@ from scipy.sparse import hstack
 import numpy as np
 from transformers import pipeline
 import plotly.graph_objects as go
-import re  # <--- This line is fixed
-import nltk # <--- NEW IMPORT for text processing
+import re 
+import nltk 
 import os
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
+from langdetect import detect, LangDetectException # <--- NEW IMPORT
 
 # --- NLTK Resource Downloads (Robust Version) ---
 # This creates a local 'nltk_data' directory and forces NLTK to use it.
@@ -44,7 +45,6 @@ nltk.download('punkt_tab', download_dir=NLTK_DATA_DIR)
 # --- CONFIGURATION ---
 CONFIG = {
     "model_paths": {
-        # --- REMOVED 'label_encoder.joblib' ---
         "without_emotion": {
             # Point to the single XGBoost pipeline
             "pipeline": 'xgb_model_condition1.joblib' 
@@ -80,7 +80,6 @@ if 'history' not in st.session_state:
 def load_all_models():
     """Loads all joblib model files."""
     try:
-        # --- REMOVED 'label_encoder.joblib' from loading ---
         models = {
             "without_emotion": (
                 joblib.load(CONFIG["model_paths"]["without_emotion"]["pipeline"])
@@ -116,13 +115,10 @@ def preprocess_text(text):
     c. Stopword Removal
     d. Lemmatization
     """
-    # --- ADD THIS BLOCK ---
     # This re-appends the path *inside* the cached function
     # to ensure NLTK can find the data.
-    # NLTK_DATA_DIR is defined at the top of your script.
     if NLTK_DATA_DIR not in nltk.data.path:
         nltk.data.path.append(NLTK_DATA_DIR)
-    # --- END NEW BLOCK ---
 
     # Initialize components
     lemmatizer = WordNetLemmatizer()
@@ -146,7 +142,6 @@ def preprocess_text(text):
             
     # Return a single string, as TfidfVectorizer expects this
     return ' '.join(processed_tokens)
-# --- END NEW FUNCTION ---
 
 
 # --- Analysis Logic ---
@@ -155,8 +150,6 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     Performs sentiment and emotion analysis and returns all calculated results.
     This function separates the calculation logic from the display logic.
     """
-    
-    # --- REMOVED: Get LabelEncoder ---
     
     # --- Preprocessing Step ---
     # We preprocess the text first, as the pipelines were trained on preprocessed text
@@ -172,7 +165,7 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     
     # Get the predicted class *index* (e.g., 0, 1, or 2)
     predicted_index = np.argmax(prediction_proba)
-    # --- MODIFIED: Convert index to label using config list ---
+    # Convert index to label using config list
     predicted_label = CONFIG["sentiment_order"][predicted_index]
     
     # --- Model 2: With Emotion (XGBoost Pipeline) ---
@@ -205,11 +198,10 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     
     # Convert the index back to the string label
     predicted_index_emo = np.argmax(prediction_proba_emo)
-    # --- MODIFIED: Convert index to label using config list ---
+    # Convert index to label using config list
     predicted_label_emo = CONFIG["sentiment_order"][predicted_index_emo]
     
     # --- DataFrames for Plotting ---
-    # --- MODIFIED: Use config list for labels ---
     df_proba = pd.DataFrame({'Sentiment': CONFIG["sentiment_order"], 'Probability': prediction_proba[0] * 100})
     df_proba = df_proba.set_index('Sentiment').reindex(CONFIG["sentiment_order"]).reset_index()
 
@@ -250,7 +242,7 @@ def analyze_sentiment(user_text, models, emotion_classifier):
         "model2": {"prediction": predicted_label_emo, "confidence": confidence_emo, "is_uncertain": is_uncertain2, "df": df_proba_emo},
         "emotion": {"df": df_scores, "top": top_emotion},
         "comparison": {"delta": confidence_delta, "text": interpretation_text},
-        "processed_text": processed_text # <--- This is now the processed text
+        "processed_text": processed_text 
     }
 
 # --- UI Helper Functions ---
@@ -345,6 +337,17 @@ if models and emotion_classifier:
         submitted = st.form_submit_button("Predict Sentiment")
 
     if submitted and user_text.strip():
+        
+        # --- NEW: Language Detection ---
+        try:
+            detected_lang = detect(user_text)
+            if detected_lang != 'en':
+                st.warning(f"⚠️ **Warning:** The detected language is **'{detected_lang}'**. This model is trained on English data and may produce inaccurate results for non-English reviews.")
+        except LangDetectException:
+            # This happens if the text is too short or just numbers/symbols
+            st.warning("⚠️ **Warning:** Could not detect the language. If this is not English, the results may be inaccurate.")
+        # --- END NEW SECTION ---
+
         with st.spinner("Analyzing text..."):
             results = analyze_sentiment(user_text, models, emotion_classifier)
         
@@ -358,7 +361,7 @@ if models and emotion_classifier:
 
         st.divider()
         
-        # --- NEW SECTION TO DISPLAY PROCESSED TEXT ---
+        # --- SECTION TO DISPLAY PROCESSED TEXT ---
         with st.expander("Show Preprocessed Text (for XGBoost models)"):
             st.markdown("**Original Text:**")
             st.info(user_text)
@@ -368,7 +371,7 @@ if models and emotion_classifier:
                 st.success(results["processed_text"])
             else:
                 st.warning("Text was empty after preprocessing (e.g., only contained stopwords or numbers).")
-        # --- END NEW SECTION ---
+        # --- END SECTION ---
         
         col1, col2 = st.columns(2)
         with col1:
@@ -407,7 +410,7 @@ if models and emotion_classifier:
     elif submitted:
         st.warning("Please enter some text to analyze.")
     
-    # --- ADDED HISTORY SECTION ---
+    # --- HISTORY SECTION ---
     st.divider()
     st.markdown("## Analysis History")
 
@@ -445,4 +448,3 @@ st.markdown("""
         Model deployed by Heryanshah Bin Suhimi | This web application is for FYP research purposes only.
     </div>
 """, unsafe_allow_html=True)
-
