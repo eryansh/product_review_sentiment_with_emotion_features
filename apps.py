@@ -21,10 +21,12 @@ CONFIG = {
         "model_text_only": "ryan_text_deberta_model.h5",
         "model_text_emotion": "ryan_text_emotion_deberta_model.h5"
     },
-    # IMPORTANT: Ensure this matches the base model you used for training.
-    # Common options: "microsoft/deberta-base", "microsoft/deberta-v3-base", or "microsoft/deberta-v3-small"
+    # Tokenizer for DeBERTa (must match what you trained with)
     "tokenizer_name": "microsoft/deberta-v3-base", 
+    
+    # Emotion Model (Using j-hartmann)
     "emotion_model": "j-hartmann/emotion-english-distilroberta-base",
+    
     "sentiment_labels": ["Negative", "Neutral", "Positive"],
     "emotion_labels": ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"],
     "colors": {
@@ -48,13 +50,18 @@ def load_components():
         tokenizer = AutoTokenizer.from_pretrained("microsoft/deberta-base")
 
     # 2. Load Emotion Classifier (Pipeline)
-    emotion_pipe = pipeline("text-classification", model=CONFIG["emotion_model"], return_all_scores=True)
+    # --- CRITICAL FIX: Added framework="tf" to use TensorFlow instead of PyTorch ---
+    emotion_pipe = pipeline(
+        "text-classification", 
+        model=CONFIG["emotion_model"], 
+        return_all_scores=True, 
+        framework="tf" # <--- Forces TensorFlow mode
+    )
 
     # 3. Download & Load Keras Models (.h5)
     models = {}
     
     # Define custom objects (Often needed for Transformer layers in Keras)
-    # We try to include common Transformer layers just in case
     custom_objects = {"TFAutoModelForSequenceClassification": TFAutoModelForSequenceClassification}
 
     with st.spinner("Downloading your custom DeBERTa models from Hugging Face... (This happens once)"):
@@ -96,34 +103,32 @@ def prepare_inputs(text, tokenizer, max_len=512):
 # --- MAIN ANALYSIS ENGINE ---
 def analyze(text, tokenizer, emotion_pipe, models):
     # 1. Prepare Text Inputs (Tokens)
-    # Note: Keras models usually expect a list like [input_ids, attention_mask] or a dict
     inputs = prepare_inputs(text, tokenizer)
     
     # 2. Extract Emotion Features (for Model 2)
-    # We truncate to 512 for the emotion model to avoid errors
+    # Truncate text to 512 for the emotion model
     emo_results = emotion_pipe(text[:512])[0]
+    
     # Map scores to the fixed order defined in CONFIG
     scores_dict = {item['label']: item['score'] for item in emo_results}
     emotion_vector = np.array([scores_dict[l] for l in CONFIG["emotion_labels"]]).reshape(1, -1)
     
     # --- PREDICTION: MODEL 1 (Text Only) ---
-    # Assuming Model 1 takes [input_ids, attention_mask]
     try:
-        # Try passing dictionary (common in Transformers)
+        # Try passing dictionary
         pred_probs_1 = models["text_only"].predict(inputs)
     except:
         # Fallback: Try passing list [ids, mask]
         pred_probs_1 = models["text_only"].predict([inputs['input_ids'], inputs['attention_mask']])
         
-    # Handle output format (Logits vs Softmax)
+    # Handle output format
     if hasattr(pred_probs_1, 'logits'):
         pred_probs_1 = tf.nn.softmax(pred_probs_1.logits, axis=1).numpy()[0]
     else:
-        # If model ends with Softmax layer
         pred_probs_1 = pred_probs_1[0] 
 
     # --- PREDICTION: MODEL 2 (Text + Emotion) ---
-    # This assumes the model was trained with inputs: [input_ids, attention_mask, emotion_features]
+    # Assumes input order: [input_ids, attention_mask, emotion_features]
     try:
         pred_probs_2 = models["text_emotion"].predict([
             inputs['input_ids'], 
@@ -131,10 +136,8 @@ def analyze(text, tokenizer, emotion_pipe, models):
             emotion_vector
         ])
     except:
-        # Fallback: Some models might accept just [ids, features] if mask is omitted, but unlikely for DeBERTa.
-        # Let's assume standard 3-input structure.
         st.error("Input Shape Mismatch on Model 2. Ensure it accepts [input_ids, attention_mask, emotion_features].")
-        pred_probs_2 = np.zeros((1, 3)) # Dummy result to prevent crash
+        pred_probs_2 = np.zeros((1, 3)) 
 
     if hasattr(pred_probs_2, 'logits'):
         pred_probs_2 = tf.nn.softmax(pred_probs_2.logits, axis=1).numpy()[0]
