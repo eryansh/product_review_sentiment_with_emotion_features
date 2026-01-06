@@ -8,13 +8,13 @@ import plotly.graph_objects as go
 import re 
 import nltk 
 import os
+import random
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
 from langdetect import detect, LangDetectException
 
 # --- NLTK Resource Downloads (Robust Version) ---
-# This creates a local 'nltk_data' directory and forces NLTK to use it.
 try:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
 except NameError:
@@ -97,6 +97,52 @@ def load_emotion_model():
     except Exception as e:
         st.error(f"Could not load the emotion model from Hugging Face. Please check the internet connection. Error: {e}")
         return None
+
+# --- NEW: Custom Emoji Rain Function ---
+def rain(emoji="🎈", font_size=50, falling_speed=4, animation_length=3):
+    """
+    Creates a raining effect of emojis using CSS animation.
+    """
+    # Create HTML for 20 random emojis
+    emoji_html = ""
+    for i in range(20):
+        left_pos = random.randint(0, 100)
+        delay = random.uniform(0, 2)
+        duration = random.uniform(falling_speed, falling_speed + 2)
+        emoji_html += f"""
+        <div class="emoji" style="left: {left_pos}vw; animation-delay: {delay}s; animation-duration: {duration}s;">{emoji}</div>
+        """
+
+    style = f"""
+    <style>
+    .emoji-rain-container {{
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        pointer-events: none;
+        z-index: 9999;
+        overflow: hidden;
+    }}
+    .emoji {{
+        position: absolute;
+        top: -10%;
+        font-size: {font_size}px;
+        animation-name: fall;
+        animation-timing-function: ease-in;
+        animation-fill-mode: forwards;
+    }}
+    @keyframes fall {{
+        0% {{ top: -10%; transform: rotate(0deg); }}
+        100% {{ top: 110%; transform: rotate(20deg); }}
+    }}
+    </style>
+    <div class="emoji-rain-container">
+        {emoji_html}
+    </div>
+    """
+    st.markdown(style, unsafe_allow_html=True)
 
 # --- Preprocessing Function ---
 @st.cache_data
@@ -302,10 +348,30 @@ if models and emotion_classifier:
         with st.spinner("Analyzing text..."):
             results = analyze_sentiment(user_text, models, emotion_classifier)
         
-        # --- FEATURE: Visual Effects ---
-        if results["model2"]["prediction"] == 'Positive' and results["model2"]["confidence"] > 0.85:
+        # --- FEATURE: Dynamic Visual Effects ---
+        top_emo = results["emotion"]["top"]
+        sentiment_pred = results["model2"]["prediction"]
+
+        # 1. Anger -> Fire Rain 🔥
+        if top_emo == 'anger':
+            rain(emoji="🔥", falling_speed=3)
+        # 2. Fear -> Scream Rain 😱
+        elif top_emo == 'fear':
+            rain(emoji="😱", falling_speed=3)
+        # 3. Disgust -> Nauseated Rain 🤢
+        elif top_emo == 'disgust':
+            rain(emoji="🤢", falling_speed=4)
+        # 4. Surprise -> Shocked Rain 😲
+        elif top_emo == 'surprise':
+            rain(emoji="😲", falling_speed=4)
+        # 5. Standard Positive (Joy) -> Balloons 🎈
+        elif sentiment_pred == 'Positive' and top_emo == 'joy':
             st.balloons()
-        elif results["model2"]["prediction"] == 'Negative' and results["model2"]["confidence"] > 0.85:
+        # 6. Love -> Hearts ❤️
+        elif sentiment_pred == 'Positive':
+            rain(emoji="❤️", falling_speed=4)
+        # 7. Standard Negative (Sadness/Neutral) -> Snow ❄️
+        elif sentiment_pred == 'Negative':
             st.snow()
 
         # --- Store History ---
