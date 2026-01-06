@@ -1,7 +1,11 @@
 streamlit
+scikit-learn
 pandas
-numpy
+scipy
 transformers
+torch
 plotly
-tensorflow
-tf-keras
+numpy
+nltk
+imbalanced-learn
+xgboost
