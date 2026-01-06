@@ -1,63 +1,22 @@
 import streamlit as st
-import joblib
 import pandas as pd
-from scipy.sparse import hstack
 import numpy as np
-from transformers import pipeline
+from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification
 import plotly.graph_objects as go
-import re  # <--- This line is fixed
-import nltk # <--- NEW IMPORT for text processing
+import re
 import os
-from nltk.corpus import stopwords
-from nltk.stem import WordNetLemmatizer
-from nltk.tokenize import word_tokenize
-
-# --- NLTK Resource Downloads (Robust Version) ---
-# This creates a local 'nltk_data' directory and forces NLTK to use it.
-# This is the most reliable method for Streamlit Cloud.
-
-# Get the directory of the current script
-# Use a fallback for environments where __file__ isn't defined (like some notebooks)
-try:
-    APP_DIR = os.path.dirname(os.path.abspath(__file__))
-except NameError:
-    APP_DIR = os.getcwd()
-
-# Define the path for NLTK data
-NLTK_DATA_DIR = os.path.join(APP_DIR, "nltk_data")
-
-# Create the directory if it doesn't exist
-if not os.path.exists(NLTK_DATA_DIR):
-    os.makedirs(NLTK_DATA_DIR)
-
-# Add this path to NLTK's data path list
-if NLTK_DATA_DIR not in nltk.data.path:
-    nltk.data.path.append(NLTK_DATA_DIR)
-
-# Now, download the necessary packages to that specific directory
-nltk.download('stopwords', download_dir=NLTK_DATA_DIR)
-nltk.download('punkt', download_dir=NLTK_DATA_DIR)
-nltk.download('wordnet', download_dir=NLTK_DATA_DIR)
-nltk.download('punkt_tab', download_dir=NLTK_DATA_DIR) 
-# --- END NEW SECTION ---
+import torch
 
 # --- CONFIGURATION ---
 CONFIG = {
-    "model_paths": {
-        # --- REMOVED 'label_encoder.joblib' ---
-        "without_emotion": {
-            # Point to the single XGBoost pipeline
-            "pipeline": 'xgb_model_condition1.joblib' 
-        },
-        "with_emotion": {
-            # Point to the single XGBoost pipeline
-            "pipeline": 'xgb_model_condition2.joblib'
-        }
+    "model_names": {
+        "without_emotion": "heryanshah/deberta-electronic-sentiment-text",
+        "with_emotion": "heryanshah/deberta-emotion-sentiment",
+        "emotion_detector": "j-hartmann/emotion-english-distilroberta-base"
     },
     "emotion_labels": ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"],
-    # This list now replaces the LabelEncoder
+    # Ensure these match the labels your DeBERTa models were trained on (Case Sensitive)
     "sentiment_order": ['Negative', 'Neutral', 'Positive'], 
-    "hugging_face_model": "j-hartmann/emotion-english-distilroberta-base",
     "sentiment_color_map": {'Positive': '#22c55e', 'Negative': '#ef4444', 'Neutral': '#a1a1aa'},
     "emotion_color_map": {'sadness': '#3b82f6', 'joy': '#facc15', 'anger': '#ef4444', 'fear': '#a855f7', 'surprise': '#22d3ee', 'disgust': '#84cc16', 'neutral': '#a1a1aa'}
 }
@@ -65,7 +24,7 @@ CONFIG = {
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Sentiment Classification with Emotion Features",
+    page_title="DeBERTa Sentiment Analysis",
     page_icon="🤖",
     layout="wide",
 )
@@ -77,192 +36,134 @@ if 'history' not in st.session_state:
 
 # --- Asset Loading ---
 @st.cache_resource
-def load_all_models():
-    """Loads all joblib model files."""
+def load_models():
+    """Loads all Hugging Face pipelines."""
     try:
-        # --- REMOVED 'label_encoder.joblib' from loading ---
-        models = {
-            "without_emotion": (
-                joblib.load(CONFIG["model_paths"]["without_emotion"]["pipeline"])
-            ),
-            "with_emotion": (
-                joblib.load(CONFIG["model_paths"]["with_emotion"]["pipeline"])
-            )
-        }
+        models = {}
+        
+        # 1. Load Text-Only Model
+        models["without_emotion"] = pipeline(
+            "text-classification", 
+            model=CONFIG["model_names"]["without_emotion"], 
+            return_all_scores=True  # Important to get probabilities for all classes
+        )
+        
+        # 2. Load Text + Emotion Model
+        models["with_emotion"] = pipeline(
+            "text-classification", 
+            model=CONFIG["model_names"]["with_emotion"], 
+            return_all_scores=True 
+        )
+        
+        # 3. Load Emotion Detector (for UI and feature extraction if needed)
+        models["emotion_classifier"] = pipeline(
+            "text-classification", 
+            model=CONFIG["model_names"]["emotion_detector"], 
+            return_all_scores=True
+        )
+        
         return models
-    except FileNotFoundError as e:
-        st.error(f"Error: A model file was not found. Please ensure all .joblib files are present. Details: {e}")
-        return None
     except Exception as e:
-        st.error(f"An error occurred while loading the models: {e}")
+        st.error(f"Error loading models from Hugging Face. Please check your internet connection or model names. Details: {e}")
         return None
-
-@st.cache_resource
-def load_emotion_model():
-    """Loads the emotion detection model from Hugging Face."""
-    try:
-        return pipeline("text-classification", model=CONFIG["hugging_face_model"], return_all_scores=True)
-    except Exception as e:
-        st.error(f"Could not load the emotion model from Hugging Face. Please check the internet connection. Error: {e}")
-        return None
-
-# --- NEW PREPROCESSING FUNCTION ---
-@st.cache_data  # Cache this computation
-def preprocess_text(text):
-    """
-    Applies the full preprocessing pipeline:
-    a. Cleansing (Lowercase, numbers, punctuation, HTML)
-    b. Tokenization
-    c. Stopword Removal
-    d. Lemmatization
-    """
-    # --- ADD THIS BLOCK ---
-    # This re-appends the path *inside* the cached function
-    # to ensure NLTK can find the data.
-    # NLTK_DATA_DIR is defined at the top of your script.
-    if NLTK_DATA_DIR not in nltk.data.path:
-        nltk.data.path.append(NLTK_DATA_DIR)
-    # --- END NEW BLOCK ---
-
-    # Initialize components
-    lemmatizer = WordNetLemmatizer()
-    stop_words = set(stopwords.words('english'))
-    
-    # a. Data Cleansing
-    text = re.sub(r'<[^>]+>', '', text)  # Remove HTML tags
-    text = re.sub(r'\d+', '', text)      # Remove numbers
-    text = re.sub(r'[^\w\s]', '', text) # Remove punctuation
-    text = text.lower()                  # Lowercasing
-    
-    # b. Tokenization
-    tokens = word_tokenize(text)
-    
-    processed_tokens = []
-    for word in tokens:
-        # c. Stopword Removal
-        if word not in stop_words:
-            # d. Lemmatization
-            processed_tokens.append(lemmatizer.lemmatize(word))
-            
-    # Return a single string, as TfidfVectorizer expects this
-    return ' '.join(processed_tokens)
-# --- END NEW FUNCTION ---
-
 
 # --- Analysis Logic ---
-def analyze_sentiment(user_text, models, emotion_classifier):
+def analyze_sentiment(user_text, models):
     """
-    Performs sentiment and emotion analysis and returns all calculated results.
-    This function separates the calculation logic from the display logic.
+    Performs sentiment analysis using the two DeBERTa models and emotion detection.
     """
     
-    # --- REMOVED: Get LabelEncoder ---
+    # --- 1. Detect Emotion (Feature Extraction) ---
+    truncated_text = user_text[:512] # Limit for RoBERTa
+    emotion_scores_raw = models["emotion_classifier"](truncated_text)[0]
     
-    # --- Preprocessing Step ---
-    # We preprocess the text first, as the pipelines were trained on preprocessed text
-    processed_text = preprocess_text(user_text)
-    
-    # --- Model 1: Without Emotion (XGBoost Pipeline) ---
-    # This single object contains TFIDF, Chi2, SMOTE, and XGB
-    pipeline_cond1 = models["without_emotion"]
-    
-    # We call predict_proba on the single processed text string.
-    # The pipeline handles all vectorization and selection internally.
-    prediction_proba = pipeline_cond1.predict_proba([processed_text])
-    
-    # Get the predicted class *index* (e.g., 0, 1, or 2)
-    predicted_index = np.argmax(prediction_proba)
-    # --- MODIFIED: Convert index to label using config list ---
-    predicted_label = CONFIG["sentiment_order"][predicted_index]
-    
-    # --- Model 2: With Emotion (XGBoost Pipeline) ---
-    # This single object contains ColumnTransformer, Chi2, SMOTE, and XGB
-    pipeline_cond2 = models["with_emotion"]
-    
-    # --- Get emotion features (same as before) ---
-    truncated_text = user_text[:512] # Truncate for RoBERTa model limit
-    emotion_scores_raw = emotion_classifier(truncated_text)[0]
-    
-    scores_dict = {item['label']: item['score'] for item in emotion_scores_raw}
-    emotion_features = np.array([scores_dict[l] for l in CONFIG["emotion_labels"]]).reshape(1, -1)
-    
-    # --- Create the DataFrame for the pipeline ---
-    # This pipeline was trained on a DataFrame, so we must build one
-    # that matches the training data structure.
-    
-    # Create a dictionary for the emotion features with the correct column names
-    emotion_data = {f"prob_{label}": score for label, score in zip(CONFIG["emotion_labels"], emotion_features[0])}
-    
-    data_dict = {
-        'final_preprocessed_text': [processed_text], 
-        **emotion_data
-    }
-    input_df = pd.DataFrame(data_dict)
-
-    # We call predict_proba on the DataFrame.
-    # The pipeline handles all feature extraction and selection.
-    prediction_proba_emo = pipeline_cond2.predict_proba(input_df)
-    
-    # Convert the index back to the string label
-    predicted_index_emo = np.argmax(prediction_proba_emo)
-    # --- MODIFIED: Convert index to label using config list ---
-    predicted_label_emo = CONFIG["sentiment_order"][predicted_index_emo]
-    
-    # --- DataFrames for Plotting ---
-    # --- MODIFIED: Use config list for labels ---
-    df_proba = pd.DataFrame({'Sentiment': CONFIG["sentiment_order"], 'Probability': prediction_proba[0] * 100})
-    df_proba = df_proba.set_index('Sentiment').reindex(CONFIG["sentiment_order"]).reset_index()
-
-    df_proba_emo = pd.DataFrame({'Sentiment': CONFIG["sentiment_order"], 'Probability': prediction_proba_emo[0] * 100})
-    df_proba_emo = df_proba_emo.set_index('Sentiment').reindex(CONFIG["sentiment_order"]).reset_index()
-
+    # Process emotion scores for visualization
     df_scores = pd.DataFrame(emotion_scores_raw)
     df_scores.rename(columns={'label': 'Emotion', 'score': 'Score'}, inplace=True)
     df_scores['Score'] = df_scores['Score'] * 100
     top_emotion = df_scores.loc[df_scores['Score'].idxmax()]['Emotion']
+    
+    # --- 2. Model 1 Prediction (Text Only) ---
+    # DeBERTa Text-Only Inference
+    pred_raw_1 = models["without_emotion"](user_text[:512])[0]
+    
+    # --- 3. Model 2 Prediction (Text + Emotion) ---
+    # NOTE: If your Model 2 was trained to expect the emotion label concatenated 
+    # (e.g. "Joy [SEP] Text"), uncomment the lines below:
+    
+    # input_text_model_2 = f"{top_emotion} {user_text}" 
+    input_text_model_2 = user_text # Default: Passing raw text assuming internal handling or implicit training
+    
+    pred_raw_2 = models["with_emotion"](input_text_model_2[:512])[0]
+    
+    # --- Helper to process HF Pipeline Output into standard format ---
+    def process_hf_output(raw_output):
+        # Convert to dictionary {Label: Score}
+        scores = {item['label']: item['score'] for item in raw_output}
+        
+        # Normalize/Map labels if necessary (e.g., if model returns LABEL_0, LABEL_1)
+        # Assuming models return 'Negative', 'Neutral', 'Positive' directly.
+        # If they return LABEL_0/1/2, we map them based on CONFIG["sentiment_order"]
+        if 'LABEL_0' in scores:
+             # Create mapping assuming 0=Negative, 1=Neutral, 2=Positive (Check your training config!)
+             mapped_scores = {}
+             for i, label in enumerate(CONFIG["sentiment_order"]):
+                 key = f"LABEL_{i}"
+                 mapped_scores[label] = scores.get(key, 0.0)
+             scores = mapped_scores
+        
+        # Find predicted label
+        predicted_label = max(scores, key=scores.get)
+        confidence = scores[predicted_label]
+        
+        # Create DataFrame
+        df = pd.DataFrame(list(scores.items()), columns=['Sentiment', 'Probability'])
+        df['Probability'] = df['Probability'] * 100
+        # Sort based on fixed order
+        df = df.set_index('Sentiment').reindex(CONFIG["sentiment_order"]).reset_index()
+        
+        return predicted_label, confidence, df
+
+    # Process both outputs
+    pred_label_1, conf_1, df_1 = process_hf_output(pred_raw_1)
+    pred_label_2, conf_2, df_2 = process_hf_output(pred_raw_2)
 
     # --- Interpretation & Comparison ---
-    confidence = np.max(prediction_proba)
-    confidence_emo = np.max(prediction_proba_emo)
-    is_uncertain1 = np.isclose(confidence, 1/3, atol=0.05)
-    is_uncertain2 = np.isclose(confidence_emo, 1/3, atol=0.05)
+    # Check for uncertainty (if confidence is low, e.g., < 40%)
+    is_uncertain1 = conf_1 < 0.40
+    is_uncertain2 = conf_2 < 0.40
     
-    # Get the probability for the *same class* from the other model
-    # Note: Use predicted_index_emo (the index)
-    confidence_from_model1 = prediction_proba[0][predicted_index_emo]
-    confidence_delta = confidence_emo - confidence_from_model1
+    # Calculate Delta (Difference in confidence for Model 2's prediction compared to Model 1)
+    # We find Model 1's score for the class that Model 2 predicted
+    row_match = df_1[df_1['Sentiment'] == pred_label_2]
+    score_from_model1 = row_match['Probability'].values[0] / 100 if not row_match.empty else 0
+    confidence_delta = conf_2 - score_from_model1
 
+    # Generate text
     if is_uncertain1 or is_uncertain2:
-        interpretation_text = "The model is **uncertain** because the input text is too short or contains words not in its vocabulary."
-    elif predicted_label.lower() != predicted_label_emo.lower():
-        interpretation_text = f"These models **disagree**. Model 1 predicts **{predicted_label.capitalize()}**, while Model 2 predicts **{predicted_label_emo.capitalize()}**. "
+        interpretation_text = "The model is **uncertain** (low confidence)."
+    elif pred_label_1.lower() != pred_label_2.lower():
+        interpretation_text = f"The models **disagree**. The Text-Only model sees **{pred_label_1}**, but with Emotion features/training, it shifts to **{pred_label_2}**."
     else:
-        interpretation_text = f"Both models **agree** that the sentiment is **{predicted_label.capitalize()}**. "
-
-    if not (is_uncertain1 or is_uncertain2):
-        if top_emotion != 'neutral':
-            interpretation_text += f"The detection of strong **{top_emotion.capitalize()}** emotion likely influenced Model 2, leading to a more nuanced prediction."
-        else:
-            interpretation_text += f"This text was detected as emotionally **Neutral**, helping Model 2 produce a balanced sentiment prediction."
+        interpretation_text = f"Both models **agree** on **{pred_label_1}**."
 
     return {
-        "model1": {"prediction": predicted_label, "confidence": confidence, "is_uncertain": is_uncertain1, "df": df_proba},
-        "model2": {"prediction": predicted_label_emo, "confidence": confidence_emo, "is_uncertain": is_uncertain2, "df": df_proba_emo},
+        "model1": {"prediction": pred_label_1, "confidence": conf_1, "is_uncertain": is_uncertain1, "df": df_1},
+        "model2": {"prediction": pred_label_2, "confidence": conf_2, "is_uncertain": is_uncertain2, "df": df_2},
         "emotion": {"df": df_scores, "top": top_emotion},
-        "comparison": {"delta": confidence_delta, "text": interpretation_text},
-        "processed_text": processed_text # <--- This is now the processed text
+        "comparison": {"delta": confidence_delta, "text": interpretation_text}
     }
 
 # --- UI Helper Functions ---
 def display_sentiment_result(prediction, confidence, is_uncertain, **kwargs):
     """Displays the formatted sentiment result."""
-    if is_uncertain: st.warning("Model is uncertain due to unrecognized input.")
-    elif str(prediction).lower() == 'positive': st.success(f"**Positive** (Confidence: {confidence:.2%})")
-    elif str(prediction).lower() == 'negative': st.error(f"**Negative** (Confidence: {confidence:.2%})")
-    else: st.info(f"**Neutral** (Confidence: {confidence:.2%})")
+    if is_uncertain: st.warning("Uncertain")
+    elif str(prediction).lower() == 'positive': st.success(f"**Positive** ({confidence:.2%})")
+    elif str(prediction).lower() == 'negative': st.error(f"**Negative** ({confidence:.2%})")
+    else: st.info(f"**Neutral** ({confidence:.2%})")
 
 def create_bar_chart(df, y_col, x_col, color_map, height, show_x_title=False):
-    """Creates a generic horizontal bar chart for sentiment or emotion."""
+    """Creates a generic horizontal bar chart."""
     fig = go.Figure()
     for _, row in df.iterrows():
         fig.add_trace(go.Bar(
@@ -308,22 +209,22 @@ st.markdown("""
     @import url('https.googleapis.com/css2?family=Poppins:wght@700&display=swap');
     .main-title {
         font-family: 'tahoma', sans-serif;
-        font-size: clamp(2.5rem, 8vw, 7rem); /* Responsive font size */
+        font-size: clamp(2.5rem, 8vw, 6rem);
         font-weight: 700;
         text-align: center;
         text-shadow: 2px 2px 5px rgba(0,0,0,0.3);
+        color: white;
         padding-top: 1rem;
-        padding-bottom: 1rem;
         text-transform: uppercase;
     }
     </style>
-    <p class="main-title">Sentiment Classification with Emotion Features</p>
+    <p class="main-title">DeBERTa Sentiment Comparison</p>
     """, unsafe_allow_html=True)
 
-models = load_all_models()
-emotion_classifier = load_emotion_model()
+models = load_models()
 
-if models and emotion_classifier:
+if models:
+    # Auto-expanding text area logic
     st.markdown("""
         <style> textarea[aria-label="Enter review text here:"] { resize: none; overflow-y: hidden; } </style>
         <script>
@@ -345,10 +246,10 @@ if models and emotion_classifier:
         submitted = st.form_submit_button("Predict Sentiment")
 
     if submitted and user_text.strip():
-        with st.spinner("Analyzing text..."):
-            results = analyze_sentiment(user_text, models, emotion_classifier)
+        with st.spinner("Processing with DeBERTa models..."):
+            results = analyze_sentiment(user_text, models)
         
-        # --- Store results in history (most recent first) ---
+        # --- Store results in history ---
         st.session_state.history.insert(0, {
             "text": user_text,
             "model1_pred": results["model1"]["prediction"],
@@ -358,56 +259,46 @@ if models and emotion_classifier:
 
         st.divider()
         
-        # --- NEW SECTION TO DISPLAY PROCESSED TEXT ---
-        with st.expander("Show Preprocessed Text (for XGBoost models)"):
-            st.markdown("**Original Text:**")
-            st.info(user_text)
-            st.markdown("**Processed Text (Input for Model 1 & 2):**")
-            # Display processed text, or a note if it's empty after processing
-            if results["processed_text"].strip():
-                st.success(results["processed_text"])
-            else:
-                st.warning("Text was empty after preprocessing (e.g., only contained stopwords or numbers).")
-        # --- END NEW SECTION ---
-        
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("#### Model 1: Textual Features Only")
+            st.markdown("#### Model 1: DeBERTa (Text Only)")
+            st.caption(f"Source: {CONFIG['model_names']['without_emotion']}")
             display_sentiment_result(**results["model1"])
-            st.markdown("###### Sentiment Probability Comparison")
-            prob_col1, prob_col2 = st.columns(2)
-            with prob_col1:
-                st.markdown("<p style='text-align: center;'>Without Emotion</p>", unsafe_allow_html=True)
-                create_bar_chart(results["model1"]["df"], 'Sentiment', 'Probability', CONFIG["sentiment_color_map"], 180)
-            with prob_col2:
-                st.markdown("<p style='text-align: center;'>With Emotion</p>", unsafe_allow_html=True)
-                create_bar_chart(results["model2"]["df"], 'Sentiment', 'Probability', CONFIG["sentiment_color_map"], 180)
-            st.markdown("###### Interpretation of Results")
+            
+            st.markdown("###### Probability Distribution")
+            create_bar_chart(results["model1"]["df"], 'Sentiment', 'Probability', CONFIG["sentiment_color_map"], 150)
+            
+            st.markdown("###### Comparative Interpretation")
             st.info(results["comparison"]["text"])
 
         with col2:
-            st.markdown("#### Model 2: Textual Features + Emotion Probabilistic Scores")
+            st.markdown("#### Model 2: DeBERTa (Text + Emotion)")
+            st.caption(f"Source: {CONFIG['model_names']['with_emotion']}")
             display_sentiment_result(**results["model2"])
+            
             if not results["model2"]["is_uncertain"]:
                 st.metric(
-                    label=f"Confidence Shift for '{results['model2']['prediction'].capitalize()}'",
-                    value=f"{results['comparison']['delta']:+.2%}",
-                    help="How much the confidence changed for this sentiment class after adding emotion features."
+                    label=f"Confidence Shift for '{results['model2']['prediction']}'",
+                    value=f"{results['comparison']['delta']:+.2%}"
                 )
-            st.markdown("###### Emotion Analysis (Input Feature)")
+            
+            st.markdown("###### Emotion Analysis (Context)")
             emotion_map = {'sadness': '😢', 'joy': '😂', 'anger': '😠', 'fear': '😨', 'surprise': '😮', 'disgust': '🤢', 'neutral': '😐'}
-            top_emotion = results["emotion"]["top"]
-            sub_col1, sub_col2 = st.columns([1, 3])
-            with sub_col1:
-                st.markdown(f"<div style='text-align: center;'><p style='font-size: 3rem; margin-bottom: 0;'>{emotion_map.get(top_emotion,'❓')}</p><p style='font-weight: bold;'>{top_emotion.capitalize()}</p></div>", unsafe_allow_html=True)
-            with sub_col2:
-                sorted_emotions = results["emotion"]["df"].sort_values('Score', ascending=True)
-                create_bar_chart(sorted_emotions, 'Emotion', 'Score', CONFIG["emotion_color_map"], 220, show_x_title=True)
+            top_emo = results["emotion"]["top"]
+            
+            e_col1, e_col2 = st.columns([1, 4])
+            with e_col1:
+                st.markdown(f"<div style='text-align: center; font-size: 2.5rem;'>{emotion_map.get(top_emo,'❓')}</div>", unsafe_allow_html=True)
+                st.caption(top_emo.capitalize())
+            with e_col2:
+                # Show top 3 emotions only to save space
+                top_3_emotions = results["emotion"]["df"].sort_values('Score', ascending=False).head(3)
+                create_bar_chart(top_3_emotions, 'Emotion', 'Score', CONFIG["emotion_color_map"], 120, show_x_title=True)
             
     elif submitted:
         st.warning("Please enter some text to analyze.")
     
-    # --- ADDED HISTORY SECTION ---
+    # --- HISTORY SECTION ---
     st.divider()
     st.markdown("## Analysis History")
 
@@ -415,13 +306,10 @@ if models and emotion_classifier:
         st.info("Your previous analyses in this session will appear here.")
     else:
         for i, entry in enumerate(st.session_state.history):
-            # Use a unique key for each expander
             with st.expander(f"**{len(st.session_state.history) - i}.** {entry['text'][:70]}..."):
-                st.markdown(f"**Input Text:** _{entry['text']}_")
-                st.markdown(f"**Model 1 (Text Only Prediction):** `{entry['model1_pred']}`")
-                st.markdown(f"**Model 2 (Text + Emotion Prediction):** `{entry['model2_pred']}`")
-                st.markdown(f"**Detected Top Emotion:** `{entry['top_emotion'].capitalize()}`")
-
+                st.markdown(f"**Input:** _{entry['text']}_")
+                st.markdown(f"**Text-Only Model:** `{entry['model1_pred']}` | **Text+Emotion Model:** `{entry['model2_pred']}`")
+                st.markdown(f"**Context:** Detected `{entry['top_emotion']}`")
 
 else:
     st.error("Application could not start. Please check the model files and internet connection.")
@@ -430,19 +318,12 @@ else:
 st.markdown("""
     <style>
         .footer {
-            position: fixed;
-            left: 0;
-            bottom: 0;
-            width: 100%;
-            background-color: rgba(0, 0, 0, 0.5);
-            color: white;
-            text-align: center;
-            padding: 10px;
-            font-size: 14px;
+            position: fixed; left: 0; bottom: 0; width: 100%;
+            background-color: rgba(0, 0, 0, 0.5); color: white;
+            text-align: center; padding: 10px; font-size: 14px;
         }
     </style>
     <div class="footer">
-        Model deployed by Heryanshah Bin Suhimi | This web application is for FYP research purposes only.
+        DeBERTa Models by Heryanshah Bin Suhimi | FYP Research
     </div>
 """, unsafe_allow_html=True)
-
