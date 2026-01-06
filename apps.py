@@ -98,7 +98,7 @@ def load_emotion_model():
         st.error(f"Could not load the emotion model from Hugging Face. Please check the internet connection. Error: {e}")
         return None
 
-# --- NEW: Custom Emoji Rain Function ---
+# --- NEW: Custom Emoji Rain Function (Fixed) ---
 def rain(emoji="🎈", font_size=50, falling_speed=4, animation_length=3):
     """
     Creates a raining effect of emojis using CSS animation.
@@ -109,9 +109,8 @@ def rain(emoji="🎈", font_size=50, falling_speed=4, animation_length=3):
         left_pos = random.randint(0, 100)
         delay = random.uniform(0, 2)
         duration = random.uniform(falling_speed, falling_speed + 2)
-        emoji_html += f"""
-        <div class="emoji" style="left: {left_pos}vw; animation-delay: {delay}s; animation-duration: {duration}s;">{emoji}</div>
-        """
+        # FIX: Removed indentation and newlines to prevent Markdown from seeing this as a code block
+        emoji_html += f'<div class="emoji" style="left: {left_pos}vw; animation-delay: {delay}s; animation-duration: {duration}s;">{emoji}</div>'
 
     style = f"""
     <style>
