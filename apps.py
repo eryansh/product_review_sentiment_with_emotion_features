@@ -5,48 +5,69 @@ from scipy.sparse import hstack
 import numpy as np
 from transformers import pipeline
 import plotly.graph_objects as go
-import re 
-import nltk 
+import re
+import nltk
 import os
+import sqlite3
+from datetime import datetime
+from pathlib import Path
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
 from langdetect import detect, LangDetectException
 
-# --- NLTK Resource Downloads (Robust Version) ---
+# =========================================================
+# 0) CONFIG: You only need to change this secret number
+# =========================================================
+CLEAR_HISTORY_SECRET = "123456"   # <-- CHANGE THIS to your own secret number
+
+# =========================================================
+# 1) NLTK Resource Downloads (Robust Version)
+# =========================================================
 try:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
 except NameError:
     APP_DIR = os.getcwd()
 
 NLTK_DATA_DIR = os.path.join(APP_DIR, "nltk_data")
-
 if not os.path.exists(NLTK_DATA_DIR):
     os.makedirs(NLTK_DATA_DIR)
 
 if NLTK_DATA_DIR not in nltk.data.path:
     nltk.data.path.append(NLTK_DATA_DIR)
 
+# These downloads are kept as in your original code
 nltk.download('stopwords', download_dir=NLTK_DATA_DIR)
 nltk.download('punkt', download_dir=NLTK_DATA_DIR)
 nltk.download('wordnet', download_dir=NLTK_DATA_DIR)
-nltk.download('punkt_tab', download_dir=NLTK_DATA_DIR) 
-# --- END NLTK SECTION ---
+nltk.download('punkt_tab', download_dir=NLTK_DATA_DIR)
 
-# --- CONFIGURATION ---
+# =========================================================
+# 2) CONFIGURATION
+# =========================================================
 CONFIG = {
     "model_paths": {
-        "without_emotion": { "pipeline": 'xgb_model_condition1.joblib' },
-        "with_emotion": { "pipeline": 'xgb_model_condition2.joblib' }
+        "without_emotion": {"pipeline": 'xgb_model_condition1.joblib'},
+        "with_emotion": {"pipeline": 'xgb_model_condition2.joblib'}
     },
     "emotion_labels": ["anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise"],
-    "sentiment_order": ['Negative', 'Neutral', 'Positive'], 
+    "sentiment_order": ['Negative', 'Neutral', 'Positive'],
     "hugging_face_model": "j-hartmann/emotion-english-distilroberta-base",
     "sentiment_color_map": {'Positive': '#22c55e', 'Negative': '#ef4444', 'Neutral': '#a1a1aa'},
-    "emotion_color_map": {'sadness': '#3b82f6', 'joy': '#facc15', 'anger': '#ef4444', 'fear': '#a855f7', 'surprise': '#22d3ee', 'disgust': '#84cc16', 'neutral': '#a1a1aa'}
+    "emotion_color_map": {
+        'sadness': '#3b82f6',
+        'joy': '#facc15',
+        'anger': '#ef4444',
+        'fear': '#a855f7',
+        'surprise': '#22d3ee',
+        'disgust': '#84cc16',
+        'neutral': '#a1a1aa'
+    }
 }
 
-# --- LIST OF DEMO SCENARIOS ---
+# =========================================================
+# 3) DEMO SCENARIOS
+# =========================================================
 demo_options = {
     "Select an example...": "",
     "Standard Positive": "The battery life of this phone is amazing, I'm so happy with my purchase!",
@@ -58,20 +79,124 @@ demo_options = {
     "Non-English (Language Check)": "Barang ini sangat bagus dan berkualiti tinggi."
 }
 
-# --- Page Configuration ---
+# =========================================================
+# 4) Page Configuration
+# =========================================================
 st.set_page_config(
     page_title="Sentiment Classification with Emotion Features",
     page_icon="🤖",
     layout="wide",
 )
 
-# --- Initialize Session State ---
+# =========================================================
+# 5) Session State
+# =========================================================
 if 'history' not in st.session_state:
     st.session_state.history = []
 if 'user_input' not in st.session_state:
     st.session_state.user_input = "The battery life of this phone is amazing, I'm so happy with my purchase!"
 
-# --- Asset Loading ---
+# NEW: username gate
+if "username" not in st.session_state:
+    st.session_state.username = ""
+
+# NEW: visitor count session guard
+if "visitor_counted" not in st.session_state:
+    st.session_state.visitor_counted = False
+
+# =========================================================
+# 6) Persistent Storage: SQLite (History + Visitor Count)
+# =========================================================
+DB_PATH = os.path.join(APP_DIR, "app_storage.db")
+
+@st.cache_resource
+def get_conn():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    cur = conn.cursor()
+
+    # Shared history (visible to everyone)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT NOT NULL,
+            username TEXT NOT NULL,
+            text TEXT NOT NULL,
+            model1_pred TEXT NOT NULL,
+            model2_pred TEXT NOT NULL,
+            top_emotion TEXT NOT NULL
+        )
+    """)
+
+    # Counters (visitor count)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS counters (
+            key TEXT PRIMARY KEY,
+            value INTEGER NOT NULL
+        )
+    """)
+
+    # Initialize visitor counter if not exists
+    cur.execute("INSERT OR IGNORE INTO counters (key, value) VALUES (?, ?)", ("visitors", 0))
+    conn.commit()
+    return conn
+
+def get_visitor_count(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM counters WHERE key = ?", ("visitors",))
+    row = cur.fetchone()
+    return int(row[0]) if row else 0
+
+def increment_visitor_count_once_per_session(conn):
+    if not st.session_state.visitor_counted:
+        cur = conn.cursor()
+        cur.execute("UPDATE counters SET value = value + 1 WHERE key = ?", ("visitors",))
+        conn.commit()
+        st.session_state.visitor_counted = True
+
+def add_history_entry(conn, entry: dict):
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO history (ts, username, text, model1_pred, model2_pred, top_emotion)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        entry["ts"],
+        entry["username"],
+        entry["text"],
+        entry["model1_pred"],
+        entry["model2_pred"],
+        entry["top_emotion"]
+    ))
+    conn.commit()
+
+def read_shared_history(conn, limit=200):
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT ts, username, text, model1_pred, model2_pred, top_emotion
+        FROM history
+        ORDER BY id DESC
+        LIMIT ?
+    """, (limit,))
+    rows = cur.fetchall()
+    results = []
+    for r in rows:
+        results.append({
+            "timestamp": r[0],
+            "username": r[1],
+            "text": r[2],
+            "model1_pred": r[3],
+            "model2_pred": r[4],
+            "top_emotion": r[5],
+        })
+    return results
+
+def clear_shared_history(conn):
+    cur = conn.cursor()
+    cur.execute("DELETE FROM history")
+    conn.commit()
+
+# =========================================================
+# 7) Asset Loading
+# =========================================================
 @st.cache_resource
 def load_all_models():
     """Loads all joblib model files."""
@@ -97,7 +222,9 @@ def load_emotion_model():
         st.error(f"Could not load the emotion model from Hugging Face. Please check the internet connection. Error: {e}")
         return None
 
-# --- Preprocessing Function ---
+# =========================================================
+# 8) Preprocessing Function
+# =========================================================
 @st.cache_data
 def preprocess_text(text):
     if NLTK_DATA_DIR not in nltk.data.path:
@@ -105,45 +232,46 @@ def preprocess_text(text):
 
     lemmatizer = WordNetLemmatizer()
     stop_words = set(stopwords.words('english'))
-    
+
     text = re.sub(r'<[^>]+>', '', text)
     text = re.sub(r'\d+', '', text)
     text = re.sub(r'[^\w\s]', '', text)
     text = text.lower()
-    
+
     tokens = word_tokenize(text)
     processed_tokens = [lemmatizer.lemmatize(word) for word in tokens if word not in stop_words]
-            
+
     return ' '.join(processed_tokens)
 
-
-# --- Analysis Logic ---
+# =========================================================
+# 9) Analysis Logic
+# =========================================================
 def analyze_sentiment(user_text, models, emotion_classifier):
     processed_text = preprocess_text(user_text)
-    
+
     # --- Model 1: Without Emotion ---
     pipeline_cond1 = models["without_emotion"]
     prediction_proba = pipeline_cond1.predict_proba([processed_text])
     predicted_index = np.argmax(prediction_proba)
     predicted_label = CONFIG["sentiment_order"][predicted_index]
-    
+
     # --- Model 2: With Emotion ---
     pipeline_cond2 = models["with_emotion"]
     truncated_text = user_text[:512]
     emotion_scores_raw = emotion_classifier(truncated_text)[0]
-    
+
     scores_dict = {item['label']: item['score'] for item in emotion_scores_raw}
     emotion_features = np.array([scores_dict[l] for l in CONFIG["emotion_labels"]]).reshape(1, -1)
-    
+
     emotion_data = {f"prob_{label}": score for label, score in zip(CONFIG["emotion_labels"], emotion_features[0])}
-    
+
     data_dict = {'final_preprocessed_text': [processed_text], **emotion_data}
     input_df = pd.DataFrame(data_dict)
 
     prediction_proba_emo = pipeline_cond2.predict_proba(input_df)
     predicted_index_emo = np.argmax(prediction_proba_emo)
     predicted_label_emo = CONFIG["sentiment_order"][predicted_index_emo]
-    
+
     # --- DataFrames for Plotting ---
     df_proba = pd.DataFrame({'Sentiment': CONFIG["sentiment_order"], 'Probability': prediction_proba[0] * 100})
     df_proba = df_proba.set_index('Sentiment').reindex(CONFIG["sentiment_order"]).reset_index()
@@ -161,7 +289,7 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     confidence_emo = np.max(prediction_proba_emo)
     is_uncertain1 = np.isclose(confidence, 1/3, atol=0.05)
     is_uncertain2 = np.isclose(confidence_emo, 1/3, atol=0.05)
-    
+
     confidence_from_model1 = prediction_proba[0][predicted_index_emo]
     confidence_delta = confidence_emo - confidence_from_model1
 
@@ -183,15 +311,21 @@ def analyze_sentiment(user_text, models, emotion_classifier):
         "model2": {"prediction": predicted_label_emo, "confidence": confidence_emo, "is_uncertain": is_uncertain2, "df": df_proba_emo},
         "emotion": {"df": df_scores, "top": top_emotion},
         "comparison": {"delta": confidence_delta, "text": interpretation_text},
-        "processed_text": processed_text 
+        "processed_text": processed_text
     }
 
-# --- UI Helper Functions ---
+# =========================================================
+# 10) UI Helper Functions
+# =========================================================
 def display_sentiment_result(prediction, confidence, is_uncertain, **kwargs):
-    if is_uncertain: st.warning("Model is uncertain due to unrecognized input.")
-    elif str(prediction).lower() == 'positive': st.success(f"**Positive** (Confidence: {confidence:.2%})")
-    elif str(prediction).lower() == 'negative': st.error(f"**Negative** (Confidence: {confidence:.2%})")
-    else: st.info(f"**Neutral** (Confidence: {confidence:.2%})")
+    if is_uncertain:
+        st.warning("Model is uncertain due to unrecognized input.")
+    elif str(prediction).lower() == 'positive':
+        st.success(f"**Positive** (Confidence: {confidence:.2%})")
+    elif str(prediction).lower() == 'negative':
+        st.error(f"**Negative** (Confidence: {confidence:.2%})")
+    else:
+        st.info(f"**Neutral** (Confidence: {confidence:.2%})")
 
 def create_bar_chart(df, y_col, x_col, color_map, height, show_x_title=False):
     fig = go.Figure()
@@ -203,10 +337,11 @@ def create_bar_chart(df, y_col, x_col, color_map, height, show_x_title=False):
             orientation='h',
             marker_color=color_map.get(row[y_col], '#888')
         ))
-    
+
     xaxis_config = dict(range=[0, 100], showgrid=False)
-    if show_x_title: xaxis_config['title'] = "Score (%)"
-        
+    if show_x_title:
+        xaxis_config['title'] = "Score (%)"
+
     fig.update_layout(
         showlegend=False,
         height=height,
@@ -229,7 +364,15 @@ def set_video_background():
         <video id="bg-video" autoplay loop muted><source src="{video_url}" type="video/mp4"></video>
         """, unsafe_allow_html=True)
 
-# --- Main App Execution ---
+# =========================================================
+# 11) Main App Execution
+# =========================================================
+conn = get_conn()
+
+# Visitor count (once per session)
+increment_visitor_count_once_per_session(conn)
+visitor_count = get_visitor_count(conn)
+
 set_video_background()
 
 st.markdown("""
@@ -249,6 +392,27 @@ st.markdown("""
     <p class="main-title">Sentiment Classification with Emotion Features</p>
     """, unsafe_allow_html=True)
 
+# Show visitor count (always)
+st.markdown(f"**👥 Visitors:** `{visitor_count}`")
+
+# -----------------------------
+# Username Gate (no login)
+# -----------------------------
+if not st.session_state.username.strip():
+    st.markdown("## 👋 Welcome")
+    st.markdown("Before using the app, please enter your name (this will be shown in shared history).")
+
+    with st.form("name_gate"):
+        name_in = st.text_input("Your name:", placeholder="e.g., Ali / Siti / John")
+        ok = st.form_submit_button("Continue")
+
+    if ok:
+        st.session_state.username = name_in.strip()
+        st.rerun()
+
+    st.stop()
+
+# Load models after gate (saves compute for drive-by visitors)
 models = load_all_models()
 emotion_classifier = load_emotion_model()
 
@@ -289,7 +453,7 @@ if models and emotion_classifier:
         submitted = st.form_submit_button("Predict Sentiment")
 
     if submitted and user_text.strip():
-        
+
         # --- FEATURE: Language Detection ---
         try:
             detected_lang = detect(user_text)
@@ -300,8 +464,8 @@ if models and emotion_classifier:
 
         with st.spinner("Analyzing text..."):
             results = analyze_sentiment(user_text, models, emotion_classifier)
-        
-        # --- Store History ---
+
+        # --- Store Session History (local, current user session only) ---
         st.session_state.history.insert(0, {
             "text": user_text,
             "model1_pred": results["model1"]["prediction"],
@@ -309,8 +473,18 @@ if models and emotion_classifier:
             "top_emotion": results["emotion"]["top"]
         })
 
+        # --- Store Shared History (visible to everyone) ---
+        add_history_entry(conn, {
+            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "username": st.session_state.username,
+            "text": user_text,
+            "model1_pred": results["model1"]["prediction"],
+            "model2_pred": results["model2"]["prediction"],
+            "top_emotion": results["emotion"]["top"]
+        })
+
         st.divider()
-        
+
         # --- Preprocessed Text Debugger ---
         with st.expander("Show Preprocessed Text (for XGBoost models)"):
             st.markdown("**Original Text:**")
@@ -320,7 +494,7 @@ if models and emotion_classifier:
                 st.success(results["processed_text"])
             else:
                 st.warning("Text was empty after preprocessing.")
-        
+
         # --- Results Columns ---
         col1, col2 = st.columns(2)
         with col1:
@@ -351,27 +525,60 @@ if models and emotion_classifier:
             top_emotion = results["emotion"]["top"]
             sub_col1, sub_col2 = st.columns([1, 3])
             with sub_col1:
-                st.markdown(f"<div style='text-align: center;'><p style='font-size: 3rem; margin-bottom: 0;'>{emotion_map.get(top_emotion,'❓')}</p><p style='font-weight: bold;'>{top_emotion.capitalize()}</p></div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div style='text-align: center;'>"
+                    f"<p style='font-size: 3rem; margin-bottom: 0;'>{emotion_map.get(top_emotion,'❓')}</p>"
+                    f"<p style='font-weight: bold;'>{top_emotion.capitalize()}</p></div>",
+                    unsafe_allow_html=True
+                )
             with sub_col2:
                 sorted_emotions = results["emotion"]["df"].sort_values('Score', ascending=True)
                 create_bar_chart(sorted_emotions, 'Emotion', 'Score', CONFIG["emotion_color_map"], 220, show_x_title=True)
-            
+
     elif submitted:
         st.warning("Please enter some text to analyze.")
-    
-    # --- History Section ---
-    st.divider()
-    st.markdown("## Analysis History")
 
-    if not st.session_state.history:
-        st.info("Your previous analyses in this session will appear here.")
+    # =========================================================
+    # 12) Shared History Section (Visible to everyone)
+    # =========================================================
+    st.divider()
+    st.markdown("## Analysis History (Shared)")
+
+    # Secret number box + clear button (no login)
+    st.markdown("### 🧹 Clear History (Secret Number)")
+    secret_input = st.text_input(
+        "Enter secret number to delete shared history:",
+        type="password",
+        placeholder="(Only owner knows this)"
+    )
+    if st.button("Delete Shared History"):
+        if secret_input == CLEAR_HISTORY_SECRET:
+            clear_shared_history(conn)
+            st.success("✅ Shared history deleted.")
+            st.rerun()
+        else:
+            st.error("❌ Wrong secret number.")
+
+    shared_history = read_shared_history(conn, limit=200)
+
+    if not shared_history:
+        st.info("No shared history yet. Run a prediction to create entries.")
     else:
-        for i, entry in enumerate(st.session_state.history):
-            with st.expander(f"**{len(st.session_state.history) - i}.** {entry['text'][:70]}..."):
-                st.markdown(f"**Input Text:** _{entry['text']}_")
-                st.markdown(f"**Model 1 (Text Only Prediction):** `{entry['model1_pred']}`")
-                st.markdown(f"**Model 2 (Text + Emotion Prediction):** `{entry['model2_pred']}`")
-                st.markdown(f"**Detected Top Emotion:** `{entry['top_emotion'].capitalize()}`")
+        for i, entry in enumerate(shared_history, start=1):
+            username = entry.get("username", "Unknown")
+            ts = entry.get("timestamp", "")
+            text = entry.get("text", "")
+            preview = (text[:70] + "...") if len(text) > 70 else text
+
+            with st.expander(f"**{i}.** {preview}  —  👤 {username}  |  🕒 {ts}"):
+                st.markdown(f"**User:** `{username}`")
+                if ts:
+                    st.markdown(f"**Time:** `{ts}`")
+                st.markdown(f"**Input Text:** _{text}_")
+                st.markdown(f"**Model 1 (Text Only Prediction):** `{entry.get('model1_pred','')}`")
+                st.markdown(f"**Model 2 (Text + Emotion Prediction):** `{entry.get('model2_pred','')}`")
+                top_emo = entry.get("top_emotion", "")
+                st.markdown(f"**Detected Top Emotion:** `{top_emo.capitalize() if isinstance(top_emo, str) else top_emo}`")
 
 else:
     st.error("Application could not start. Please check the model files and internet connection.")
