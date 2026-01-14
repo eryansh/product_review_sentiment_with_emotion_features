@@ -15,9 +15,10 @@ from nltk.tokenize import word_tokenize
 from langdetect import detect, LangDetectException
 
 # ===========================
-# Gemini imports
+# Gemini imports (FIXED SDK USAGE)
 # ===========================
 from google import genai
+from google.genai import types
 import json
 
 # =========================================================
@@ -69,7 +70,7 @@ CONFIG = {
     },
 
     # ===========================
-    # Gemini model + decoding
+    # Gemini settings
     # ===========================
     "gemini_model": "gemini-2.0-flash",
     "gemini_temperature": 0,
@@ -263,15 +264,11 @@ def get_gemini_client():
     return genai.Client(api_key=api_key)
 
 def _safe_parse_json(text: str):
-    """
-    Parse JSON even if Gemini returns extra wrapping text or markdown fences.
-    """
+    """Parse JSON even if extra text/markdown fences appear."""
     if not text:
         return None
 
     cleaned = text.strip()
-
-    # Remove markdown fences if present
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```$", "", cleaned)
 
@@ -281,7 +278,7 @@ def _safe_parse_json(text: str):
     except Exception:
         pass
 
-    # Try extract first JSON object
+    # Try extracting JSON object
     match = re.search(r"\{[\s\S]*\}", cleaned)
     if match:
         try:
@@ -292,14 +289,12 @@ def _safe_parse_json(text: str):
 
 def gemini_audit_review(client, review_text: str):
     """
-    Runs the user's audit prompt and returns dict:
-      {
-        "review_in_english": "Yes/No/Unclear",
-        "is_slang": "Yes/No/Some",
-        "electronic_product_review": "General/Yes/Specific: ...",
-        "understandable": "Yes/No/Partly",
-        "_raw": "<raw response>"
-      }
+    Output keys:
+    - review_in_english
+    - is_slang
+    - electronic_product_review
+    - understandable
+    Also includes '_raw' for debug display.
     """
     if client is None:
         return None
@@ -322,9 +317,9 @@ Allowed values:
 - review_in_english: "Yes" | "No" | "Unclear"
 - is_slang: "Yes" | "No" | "Some"
 - electronic_product_review:
-    - "General" (not about electronics specifically)
-    - "Yes" (about electronics in general)
-    - "Specific: <device/type>" (e.g., "Specific: smartphone", "Specific: laptop")
+    - "General"
+    - "Yes"
+    - "Specific: <device/type>"
 - understandable: "Yes" | "No" | "Partly"
 
 Review:
@@ -332,19 +327,19 @@ Review:
 """.strip()
 
     try:
+        # ✅ FIX: use config=types.GenerateContentConfig(...)
         resp = client.models.generate_content(
             model=CONFIG["gemini_model"],
             contents=prompt,
-            generation_config={
-                "temperature": CONFIG["gemini_temperature"],
-                "max_output_tokens": CONFIG["gemini_max_tokens"]
-            }
+            config=types.GenerateContentConfig(
+                temperature=CONFIG["gemini_temperature"],
+                max_output_tokens=CONFIG["gemini_max_tokens"]
+            )
         )
 
         raw_text = (getattr(resp, "text", "") or "").strip()
         data = _safe_parse_json(raw_text)
 
-        # If parsing fails, return fallback but keep raw for debugging
         if not isinstance(data, dict):
             return {
                 "review_in_english": "Unclear",
@@ -354,15 +349,13 @@ Review:
                 "_raw": raw_text
             }
 
-        # Normalize missing keys
-        out = {
+        return {
             "review_in_english": data.get("review_in_english", "Unclear"),
             "is_slang": data.get("is_slang", "Unclear"),
             "electronic_product_review": data.get("electronic_product_review", "Unclear"),
             "understandable": data.get("understandable", "Unclear"),
             "_raw": raw_text
         }
-        return out
 
     except Exception as e:
         return {
@@ -570,7 +563,7 @@ emotion_classifier = load_emotion_model()
 # Gemini client once
 gemini_client = get_gemini_client()
 
-# Optional Gemini debug switch (only for you)
+# Debug toggle in sidebar
 with st.sidebar:
     st.markdown("### ⚙️ Options")
     st.session_state.gemini_debug = st.toggle("Show Gemini raw output (debug)", value=st.session_state.gemini_debug)
