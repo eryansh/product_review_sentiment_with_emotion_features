@@ -15,10 +15,10 @@ from nltk.tokenize import word_tokenize
 from langdetect import detect, LangDetectException
 
 # ===========================
-# Gemini imports (FIXED SDK USAGE)
+# NEW: Groq + requests imports
 # ===========================
-from google import genai
-from google.genai import types
+import requests
+from groq import Groq
 import json
 
 # =========================================================
@@ -70,11 +70,10 @@ CONFIG = {
     },
 
     # ===========================
-    # Gemini settings
+    # NEW: Groq model config
     # ===========================
-    "gemini_model": "gemini-2.0-flash",
-    "gemini_temperature": 0,
-    "gemini_max_tokens": 220
+    "groq_model": "llama3-8b-8192",
+    "groq_temperature": 0,
 }
 
 # =========================================================
@@ -116,9 +115,9 @@ if "username" not in st.session_state:
 if "visitor_counted" not in st.session_state:
     st.session_state.visitor_counted = False
 
-# NEW: Gemini debug toggle
-if "gemini_debug" not in st.session_state:
-    st.session_state.gemini_debug = False
+# NEW: LLM debug toggle
+if "llm_debug" not in st.session_state:
+    st.session_state.llm_debug = False
 
 # =========================================================
 # 6) Persistent Storage: SQLite (History + Visitor Count)
@@ -239,65 +238,58 @@ def load_emotion_model():
         return None
 
 # =========================================================
-# 7.5) Gemini Client + Robust Prompt/Parser
+# 7.5) NEW: Groq client + robust JSON parsing + audit function
 # =========================================================
 @st.cache_resource
-def get_gemini_client():
-    """
-    Uses Streamlit Secrets (recommended) or environment variable:
-      - st.secrets["GEMINI_API_KEY"]
-      - os.getenv("GEMINI_API_KEY")
-    """
-    api_key = None
+def get_groq_client():
+    key = None
     try:
-        if "GEMINI_API_KEY" in st.secrets:
-            api_key = st.secrets["GEMINI_API_KEY"]
+        key = st.secrets.get("GROQ_API_KEY")
     except Exception:
-        api_key = None
-
-    if not api_key:
-        api_key = os.getenv("GEMINI_API_KEY")
-
-    if not api_key:
+        key = None
+    if not key:
+        key = os.getenv("GROQ_API_KEY")
+    if not key:
         return None
-
-    return genai.Client(api_key=api_key)
+    return Groq(api_key=key)
 
 def _safe_parse_json(text: str):
-    """Parse JSON even if extra text/markdown fences appear."""
     if not text:
         return None
-
     cleaned = text.strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*```$", "", cleaned)
 
-    # Try direct JSON
     try:
         return json.loads(cleaned)
     except Exception:
         pass
 
-    # Try extracting JSON object
-    match = re.search(r"\{[\s\S]*\}", cleaned)
-    if match:
+    m = re.search(r"\{[\s\S]*\}", cleaned)
+    if m:
         try:
-            return json.loads(match.group(0))
+            return json.loads(m.group(0))
         except Exception:
             return None
     return None
 
-def gemini_audit_review(client, review_text: str):
+def groq_review_audit(client, review_text: str):
     """
-    Output keys:
+    Returns dict:
     - review_in_english
     - is_slang
     - electronic_product_review
     - understandable
-    Also includes '_raw' for debug display.
+    - _raw (debug)
     """
     if client is None:
-        return None
+        return {
+            "review_in_english": "Unclear",
+            "is_slang": "Unclear",
+            "electronic_product_review": "Unclear",
+            "understandable": "Unclear",
+            "_raw": "Groq client not configured (missing GROQ_API_KEY)."
+        }
 
     prompt = f"""
 You are a strict classifier.
@@ -327,18 +319,14 @@ Review:
 """.strip()
 
     try:
-        # ✅ FIX: use config=types.GenerateContentConfig(...)
-        resp = client.models.generate_content(
-            model=CONFIG["gemini_model"],
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=CONFIG["gemini_temperature"],
-                max_output_tokens=CONFIG["gemini_max_tokens"]
-            )
+        completion = client.chat.completions.create(
+            model=CONFIG["groq_model"],
+            messages=[{"role": "user", "content": prompt}],
+            temperature=CONFIG["groq_temperature"],
         )
 
-        raw_text = (getattr(resp, "text", "") or "").strip()
-        data = _safe_parse_json(raw_text)
+        raw = (completion.choices[0].message.content or "").strip()
+        data = _safe_parse_json(raw)
 
         if not isinstance(data, dict):
             return {
@@ -346,7 +334,7 @@ Review:
                 "is_slang": "Unclear",
                 "electronic_product_review": "Unclear",
                 "understandable": "Unclear",
-                "_raw": raw_text
+                "_raw": raw
             }
 
         return {
@@ -354,7 +342,7 @@ Review:
             "is_slang": data.get("is_slang", "Unclear"),
             "electronic_product_review": data.get("electronic_product_review", "Unclear"),
             "understandable": data.get("understandable", "Unclear"),
-            "_raw": raw_text
+            "_raw": raw
         }
 
     except Exception as e:
@@ -363,7 +351,7 @@ Review:
             "is_slang": "Unclear",
             "electronic_product_review": "Unclear",
             "understandable": "Unclear",
-            "_raw": f"Gemini error: {e}"
+            "_raw": f"Groq error: {e}"
         }
 
 # =========================================================
@@ -560,13 +548,13 @@ if not st.session_state.username.strip():
 models = load_all_models()
 emotion_classifier = load_emotion_model()
 
-# Gemini client once
-gemini_client = get_gemini_client()
+# NEW: Groq client once
+groq_client = get_groq_client()
 
-# Debug toggle in sidebar
+# Sidebar options
 with st.sidebar:
     st.markdown("### ⚙️ Options")
-    st.session_state.gemini_debug = st.toggle("Show Gemini raw output (debug)", value=st.session_state.gemini_debug)
+    st.session_state.llm_debug = st.toggle("Show LLM raw output (debug)", value=st.session_state.llm_debug)
 
 if models and emotion_classifier:
     st.markdown("""
@@ -648,28 +636,35 @@ if models and emotion_classifier:
                 st.warning("Text was empty after preprocessing.")
 
         # =========================================================
-        # Gemini audit output (your required format)
+        # NEW: Online LLM Review Audit (Groq)
         # =========================================================
-        st.markdown("### 🧠 Gemini Review Audit")
+        st.markdown("### 🧠 LLM Review Audit (Online - Groq)")
 
-        if gemini_client is None:
-            st.warning("Gemini not configured. Add GEMINI_API_KEY to Streamlit secrets (or set it as env var).")
+        if groq_client is None:
+            st.warning("Groq not configured. Add GROQ_API_KEY to Streamlit secrets (or env var).")
+            o = {
+                "review_in_english": "Unclear",
+                "is_slang": "Unclear",
+                "electronic_product_review": "Unclear",
+                "understandable": "Unclear",
+                "_raw": "Missing GROQ_API_KEY"
+            }
         else:
-            with st.spinner("Gemini is checking the review..."):
-                g = gemini_audit_review(gemini_client, user_text)
+            with st.spinner("LLM is checking the review..."):
+                o = groq_review_audit(groq_client, user_text)
 
-            st.markdown(
-                f"""
-Review in English? **{g.get('review_in_english','Unclear')}**  
-Is this Slang? **{g.get('is_slang','Unclear')}**  
-Electronic Product Review? **{g.get('electronic_product_review','Unclear')}**  
-Review is understandable? **{g.get('understandable','Unclear')}**
-                """.strip()
-            )
+        st.markdown(
+            f"""
+Review in English? **{o.get('review_in_english','Unclear')}**  
+Is this Slang? **{o.get('is_slang','Unclear')}**  
+Electronic Product Review? **{o.get('electronic_product_review','Unclear')}**  
+Review is understandable? **{o.get('understandable','Unclear')}**
+            """.strip()
+        )
 
-            if st.session_state.gemini_debug:
-                st.caption("Gemini raw output (debug):")
-                st.code(g.get("_raw", ""), language="text")
+        if st.session_state.llm_debug:
+            with st.expander("Show LLM raw output (debug)"):
+                st.code(o.get("_raw", ""), language="text")
 
         st.divider()
 
