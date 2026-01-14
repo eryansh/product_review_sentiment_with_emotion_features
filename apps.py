@@ -15,7 +15,7 @@ from nltk.tokenize import word_tokenize
 from langdetect import detect, LangDetectException
 
 # ===========================
-# NEW: Gemini imports
+# Gemini imports
 # ===========================
 from google import genai
 import json
@@ -69,9 +69,11 @@ CONFIG = {
     },
 
     # ===========================
-    # NEW: Gemini model name
+    # Gemini model + decoding
     # ===========================
-    "gemini_model": "gemini-2.0-flash"
+    "gemini_model": "gemini-2.0-flash",
+    "gemini_temperature": 0,
+    "gemini_max_tokens": 220
 }
 
 # =========================================================
@@ -112,6 +114,10 @@ if "username" not in st.session_state:
 # NEW: visitor count session guard
 if "visitor_counted" not in st.session_state:
     st.session_state.visitor_counted = False
+
+# NEW: Gemini debug toggle
+if "gemini_debug" not in st.session_state:
+    st.session_state.gemini_debug = False
 
 # =========================================================
 # 6) Persistent Storage: SQLite (History + Visitor Count)
@@ -232,7 +238,7 @@ def load_emotion_model():
         return None
 
 # =========================================================
-# 7.5) NEW: Gemini Client + Prompt Function
+# 7.5) Gemini Client + Robust Prompt/Parser
 # =========================================================
 @st.cache_resource
 def get_gemini_client():
@@ -246,7 +252,6 @@ def get_gemini_client():
         if "GEMINI_API_KEY" in st.secrets:
             api_key = st.secrets["GEMINI_API_KEY"]
     except Exception:
-        # secrets may not be configured locally
         api_key = None
 
     if not api_key:
@@ -259,53 +264,68 @@ def get_gemini_client():
 
 def _safe_parse_json(text: str):
     """
-    Tries to parse JSON even if the model wraps it with extra text.
+    Parse JSON even if Gemini returns extra wrapping text or markdown fences.
     """
-    text = (text or "").strip()
     if not text:
         return None
-    # Try direct JSON parse
+
+    cleaned = text.strip()
+
+    # Remove markdown fences if present
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```$", "", cleaned)
+
+    # Try direct JSON
     try:
-        return json.loads(text)
+        return json.loads(cleaned)
     except Exception:
         pass
 
-    # Try extract the first {...} block
-    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(0))
-    except Exception:
-        return None
+    # Try extract first JSON object
+    match = re.search(r"\{[\s\S]*\}", cleaned)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            return None
+    return None
 
 def gemini_audit_review(client, review_text: str):
     """
-    Runs your prompt and returns a dict:
+    Runs the user's audit prompt and returns dict:
       {
-        "review_in_english": "...",
-        "is_slang": "...",
-        "electronic_product_review": "...",
-        "understandable": "..."
+        "review_in_english": "Yes/No/Unclear",
+        "is_slang": "Yes/No/Some",
+        "electronic_product_review": "General/Yes/Specific: ...",
+        "understandable": "Yes/No/Partly",
+        "_raw": "<raw response>"
       }
     """
     if client is None:
         return None
 
     prompt = f"""
-Is this review in english? is this slang? is this general or specific to electronic product? do you understand this review?
+You are a strict classifier.
 
-Return ONLY JSON with exactly these keys:
+You MUST respond in JSON only.
+NO explanations.
+NO markdown.
+NO extra text.
+
+Return exactly these keys:
 - review_in_english
 - is_slang
 - electronic_product_review
 - understandable
 
-Rules:
-- review_in_english: Yes / No / Unclear
-- is_slang: Yes / No / Some
-- electronic_product_review: "General" OR "Yes" OR "Specific: <what product/type>"
-- understandable: Yes / No / Partly
+Allowed values:
+- review_in_english: "Yes" | "No" | "Unclear"
+- is_slang: "Yes" | "No" | "Some"
+- electronic_product_review:
+    - "General" (not about electronics specifically)
+    - "Yes" (about electronics in general)
+    - "Specific: <device/type>" (e.g., "Specific: smartphone", "Specific: laptop")
+- understandable: "Yes" | "No" | "Partly"
 
 Review:
 \"\"\"{review_text}\"\"\"
@@ -314,29 +334,43 @@ Review:
     try:
         resp = client.models.generate_content(
             model=CONFIG["gemini_model"],
-            contents=prompt
+            contents=prompt,
+            generation_config={
+                "temperature": CONFIG["gemini_temperature"],
+                "max_output_tokens": CONFIG["gemini_max_tokens"]
+            }
         )
-        data = _safe_parse_json(getattr(resp, "text", ""))
-        if not data:
+
+        raw_text = (getattr(resp, "text", "") or "").strip()
+        data = _safe_parse_json(raw_text)
+
+        # If parsing fails, return fallback but keep raw for debugging
+        if not isinstance(data, dict):
             return {
                 "review_in_english": "Unclear",
                 "is_slang": "Unclear",
                 "electronic_product_review": "Unclear",
                 "understandable": "Unclear",
+                "_raw": raw_text
             }
-        # Ensure keys exist
-        return {
+
+        # Normalize missing keys
+        out = {
             "review_in_english": data.get("review_in_english", "Unclear"),
             "is_slang": data.get("is_slang", "Unclear"),
             "electronic_product_review": data.get("electronic_product_review", "Unclear"),
             "understandable": data.get("understandable", "Unclear"),
+            "_raw": raw_text
         }
-    except Exception:
+        return out
+
+    except Exception as e:
         return {
             "review_in_english": "Unclear",
             "is_slang": "Unclear",
             "electronic_product_review": "Unclear",
             "understandable": "Unclear",
+            "_raw": f"Gemini error: {e}"
         }
 
 # =========================================================
@@ -533,8 +567,13 @@ if not st.session_state.username.strip():
 models = load_all_models()
 emotion_classifier = load_emotion_model()
 
-# NEW: load Gemini client once
+# Gemini client once
 gemini_client = get_gemini_client()
+
+# Optional Gemini debug switch (only for you)
+with st.sidebar:
+    st.markdown("### ⚙️ Options")
+    st.session_state.gemini_debug = st.toggle("Show Gemini raw output (debug)", value=st.session_state.gemini_debug)
 
 if models and emotion_classifier:
     st.markdown("""
@@ -616,9 +655,10 @@ if models and emotion_classifier:
                 st.warning("Text was empty after preprocessing.")
 
         # =========================================================
-        # NEW: Gemini LLM prompt result (your requested display)
+        # Gemini audit output (your required format)
         # =========================================================
         st.markdown("### 🧠 Gemini Review Audit")
+
         if gemini_client is None:
             st.warning("Gemini not configured. Add GEMINI_API_KEY to Streamlit secrets (or set it as env var).")
         else:
@@ -633,6 +673,10 @@ Electronic Product Review? **{g.get('electronic_product_review','Unclear')}**
 Review is understandable? **{g.get('understandable','Unclear')}**
                 """.strip()
             )
+
+            if st.session_state.gemini_debug:
+                st.caption("Gemini raw output (debug):")
+                st.code(g.get("_raw", ""), language="text")
 
         st.divider()
 
