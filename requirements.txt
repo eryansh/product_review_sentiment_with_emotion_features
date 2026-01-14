@@ -10,3 +10,4 @@ nltk
 imbalanced-learn
 xgboost
 langdetect
+google-genai
