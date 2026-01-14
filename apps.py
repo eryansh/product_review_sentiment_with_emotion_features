@@ -1,7 +1,6 @@
 import streamlit as st
 import joblib
 import pandas as pd
-from scipy.sparse import hstack
 import numpy as np
 from transformers import pipeline
 import plotly.graph_objects as go
@@ -10,11 +9,16 @@ import nltk
 import os
 import sqlite3
 from datetime import datetime
-from pathlib import Path
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
 from langdetect import detect, LangDetectException
+
+# ===========================
+# NEW: Gemini imports
+# ===========================
+from google import genai
+import json
 
 # =========================================================
 # 0) CONFIG: You only need to change this secret number
@@ -62,7 +66,12 @@ CONFIG = {
         'surprise': '#22d3ee',
         'disgust': '#84cc16',
         'neutral': '#a1a1aa'
-    }
+    },
+
+    # ===========================
+    # NEW: Gemini model name
+    # ===========================
+    "gemini_model": "gemini-2.0-flash"
 }
 
 # =========================================================
@@ -221,6 +230,114 @@ def load_emotion_model():
     except Exception as e:
         st.error(f"Could not load the emotion model from Hugging Face. Please check the internet connection. Error: {e}")
         return None
+
+# =========================================================
+# 7.5) NEW: Gemini Client + Prompt Function
+# =========================================================
+@st.cache_resource
+def get_gemini_client():
+    """
+    Uses Streamlit Secrets (recommended) or environment variable:
+      - st.secrets["GEMINI_API_KEY"]
+      - os.getenv("GEMINI_API_KEY")
+    """
+    api_key = None
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            api_key = st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        # secrets may not be configured locally
+        api_key = None
+
+    if not api_key:
+        api_key = os.getenv("GEMINI_API_KEY")
+
+    if not api_key:
+        return None
+
+    return genai.Client(api_key=api_key)
+
+def _safe_parse_json(text: str):
+    """
+    Tries to parse JSON even if the model wraps it with extra text.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    # Try direct JSON parse
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # Try extract the first {...} block
+    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except Exception:
+        return None
+
+def gemini_audit_review(client, review_text: str):
+    """
+    Runs your prompt and returns a dict:
+      {
+        "review_in_english": "...",
+        "is_slang": "...",
+        "electronic_product_review": "...",
+        "understandable": "..."
+      }
+    """
+    if client is None:
+        return None
+
+    prompt = f"""
+Is this review in english? is this slang? is this general or specific to electronic product? do you understand this review?
+
+Return ONLY JSON with exactly these keys:
+- review_in_english
+- is_slang
+- electronic_product_review
+- understandable
+
+Rules:
+- review_in_english: Yes / No / Unclear
+- is_slang: Yes / No / Some
+- electronic_product_review: "General" OR "Yes" OR "Specific: <what product/type>"
+- understandable: Yes / No / Partly
+
+Review:
+\"\"\"{review_text}\"\"\"
+""".strip()
+
+    try:
+        resp = client.models.generate_content(
+            model=CONFIG["gemini_model"],
+            contents=prompt
+        )
+        data = _safe_parse_json(getattr(resp, "text", ""))
+        if not data:
+            return {
+                "review_in_english": "Unclear",
+                "is_slang": "Unclear",
+                "electronic_product_review": "Unclear",
+                "understandable": "Unclear",
+            }
+        # Ensure keys exist
+        return {
+            "review_in_english": data.get("review_in_english", "Unclear"),
+            "is_slang": data.get("is_slang", "Unclear"),
+            "electronic_product_review": data.get("electronic_product_review", "Unclear"),
+            "understandable": data.get("understandable", "Unclear"),
+        }
+    except Exception:
+        return {
+            "review_in_english": "Unclear",
+            "is_slang": "Unclear",
+            "electronic_product_review": "Unclear",
+            "understandable": "Unclear",
+        }
 
 # =========================================================
 # 8) Preprocessing Function
@@ -416,6 +533,9 @@ if not st.session_state.username.strip():
 models = load_all_models()
 emotion_classifier = load_emotion_model()
 
+# NEW: load Gemini client once
+gemini_client = get_gemini_client()
+
 if models and emotion_classifier:
     st.markdown("""
         <style> textarea[aria-label="Enter review text here:"] { resize: none; overflow-y: hidden; } </style>
@@ -494,6 +614,27 @@ if models and emotion_classifier:
                 st.success(results["processed_text"])
             else:
                 st.warning("Text was empty after preprocessing.")
+
+        # =========================================================
+        # NEW: Gemini LLM prompt result (your requested display)
+        # =========================================================
+        st.markdown("### 🧠 Gemini Review Audit")
+        if gemini_client is None:
+            st.warning("Gemini not configured. Add GEMINI_API_KEY to Streamlit secrets (or set it as env var).")
+        else:
+            with st.spinner("Gemini is checking the review..."):
+                g = gemini_audit_review(gemini_client, user_text)
+
+            st.markdown(
+                f"""
+Review in English? **{g.get('review_in_english','Unclear')}**  
+Is this Slang? **{g.get('is_slang','Unclear')}**  
+Electronic Product Review? **{g.get('electronic_product_review','Unclear')}**  
+Review is understandable? **{g.get('understandable','Unclear')}**
+                """.strip()
+            )
+
+        st.divider()
 
         # --- Results Columns ---
         col1, col2 = st.columns(2)
