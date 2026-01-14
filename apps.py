@@ -15,9 +15,8 @@ from nltk.tokenize import word_tokenize
 from langdetect import detect, LangDetectException
 
 # ===========================
-# NEW: Groq + requests imports
+# Groq imports
 # ===========================
-import requests
 from groq import Groq
 import json
 
@@ -41,7 +40,6 @@ if not os.path.exists(NLTK_DATA_DIR):
 if NLTK_DATA_DIR not in nltk.data.path:
     nltk.data.path.append(NLTK_DATA_DIR)
 
-# These downloads are kept as in your original code
 nltk.download('stopwords', download_dir=NLTK_DATA_DIR)
 nltk.download('punkt', download_dir=NLTK_DATA_DIR)
 nltk.download('wordnet', download_dir=NLTK_DATA_DIR)
@@ -69,10 +67,15 @@ CONFIG = {
         'neutral': '#a1a1aa'
     },
 
-    # ===========================
-    # NEW: Groq model config
-    # ===========================
-    "groq_model": "llama3-8b-8192",
+    # =====================================================
+    # Groq models (UPDATED: llama3-8b-8192 is decommissioned)
+    # Recommended replacement: llama-3.1-8b-instant
+    # Optional fallback: llama-3.3-70b-versatile
+    # =====================================================
+    "groq_models_try_order": [
+        "llama-3.1-8b-instant",
+        "llama-3.3-70b-versatile"
+    ],
     "groq_temperature": 0,
 }
 
@@ -107,15 +110,12 @@ if 'history' not in st.session_state:
 if 'user_input' not in st.session_state:
     st.session_state.user_input = "The battery life of this phone is amazing, I'm so happy with my purchase!"
 
-# NEW: username gate
 if "username" not in st.session_state:
     st.session_state.username = ""
 
-# NEW: visitor count session guard
 if "visitor_counted" not in st.session_state:
     st.session_state.visitor_counted = False
 
-# NEW: LLM debug toggle
 if "llm_debug" not in st.session_state:
     st.session_state.llm_debug = False
 
@@ -129,7 +129,6 @@ def get_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cur = conn.cursor()
 
-    # Shared history (visible to everyone)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,7 +141,6 @@ def get_conn():
         )
     """)
 
-    # Counters (visitor count)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS counters (
             key TEXT PRIMARY KEY,
@@ -150,7 +148,6 @@ def get_conn():
         )
     """)
 
-    # Initialize visitor counter if not exists
     cur.execute("INSERT OR IGNORE INTO counters (key, value) VALUES (?, ?)", ("visitors", 0))
     conn.commit()
     return conn
@@ -214,13 +211,11 @@ def clear_shared_history(conn):
 # =========================================================
 @st.cache_resource
 def load_all_models():
-    """Loads all joblib model files."""
     try:
-        models = {
+        return {
             "without_emotion": joblib.load(CONFIG["model_paths"]["without_emotion"]["pipeline"]),
             "with_emotion": joblib.load(CONFIG["model_paths"]["with_emotion"]["pipeline"])
         }
-        return models
     except FileNotFoundError as e:
         st.error(f"Error: A model file was not found. Please ensure all .joblib files are present. Details: {e}")
         return None
@@ -230,7 +225,6 @@ def load_all_models():
 
 @st.cache_resource
 def load_emotion_model():
-    """Loads the emotion detection model from Hugging Face."""
     try:
         return pipeline("text-classification", model=CONFIG["hugging_face_model"], return_all_scores=True)
     except Exception as e:
@@ -238,7 +232,7 @@ def load_emotion_model():
         return None
 
 # =========================================================
-# 7.5) NEW: Groq client + robust JSON parsing + audit function
+# 7.5) Groq client + JSON parsing + audit function
 # =========================================================
 @st.cache_resource
 def get_groq_client():
@@ -274,14 +268,6 @@ def _safe_parse_json(text: str):
     return None
 
 def groq_review_audit(client, review_text: str):
-    """
-    Returns dict:
-    - review_in_english
-    - is_slang
-    - electronic_product_review
-    - understandable
-    - _raw (debug)
-    """
     if client is None:
         return {
             "review_in_english": "Unclear",
@@ -318,41 +304,48 @@ Review:
 \"\"\"{review_text}\"\"\"
 """.strip()
 
-    try:
-        completion = client.chat.completions.create(
-            model=CONFIG["groq_model"],
-            messages=[{"role": "user", "content": prompt}],
-            temperature=CONFIG["groq_temperature"],
-        )
+    last_err = None
 
-        raw = (completion.choices[0].message.content or "").strip()
-        data = _safe_parse_json(raw)
+    # ✅ Try multiple models (avoids future deprecation breakage)
+    for model_name in CONFIG["groq_models_try_order"]:
+        try:
+            completion = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=CONFIG["groq_temperature"],
+            )
 
-        if not isinstance(data, dict):
+            raw = (completion.choices[0].message.content or "").strip()
+            data = _safe_parse_json(raw)
+
+            if not isinstance(data, dict):
+                return {
+                    "review_in_english": "Unclear",
+                    "is_slang": "Unclear",
+                    "electronic_product_review": "Unclear",
+                    "understandable": "Unclear",
+                    "_raw": raw
+                }
+
             return {
-                "review_in_english": "Unclear",
-                "is_slang": "Unclear",
-                "electronic_product_review": "Unclear",
-                "understandable": "Unclear",
+                "review_in_english": data.get("review_in_english", "Unclear"),
+                "is_slang": data.get("is_slang", "Unclear"),
+                "electronic_product_review": data.get("electronic_product_review", "Unclear"),
+                "understandable": data.get("understandable", "Unclear"),
                 "_raw": raw
             }
 
-        return {
-            "review_in_english": data.get("review_in_english", "Unclear"),
-            "is_slang": data.get("is_slang", "Unclear"),
-            "electronic_product_review": data.get("electronic_product_review", "Unclear"),
-            "understandable": data.get("understandable", "Unclear"),
-            "_raw": raw
-        }
+        except Exception as e:
+            last_err = f"{model_name}: {e}"
+            continue
 
-    except Exception as e:
-        return {
-            "review_in_english": "Unclear",
-            "is_slang": "Unclear",
-            "electronic_product_review": "Unclear",
-            "understandable": "Unclear",
-            "_raw": f"Groq error: {e}"
-        }
+    return {
+        "review_in_english": "Unclear",
+        "is_slang": "Unclear",
+        "electronic_product_review": "Unclear",
+        "understandable": "Unclear",
+        "_raw": f"Groq error (all models failed). Last error: {last_err}"
+    }
 
 # =========================================================
 # 8) Preprocessing Function
@@ -381,13 +374,11 @@ def preprocess_text(text):
 def analyze_sentiment(user_text, models, emotion_classifier):
     processed_text = preprocess_text(user_text)
 
-    # --- Model 1: Without Emotion ---
     pipeline_cond1 = models["without_emotion"]
     prediction_proba = pipeline_cond1.predict_proba([processed_text])
     predicted_index = np.argmax(prediction_proba)
     predicted_label = CONFIG["sentiment_order"][predicted_index]
 
-    # --- Model 2: With Emotion ---
     pipeline_cond2 = models["with_emotion"]
     truncated_text = user_text[:512]
     emotion_scores_raw = emotion_classifier(truncated_text)[0]
@@ -396,7 +387,6 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     emotion_features = np.array([scores_dict[l] for l in CONFIG["emotion_labels"]]).reshape(1, -1)
 
     emotion_data = {f"prob_{label}": score for label, score in zip(CONFIG["emotion_labels"], emotion_features[0])}
-
     data_dict = {'final_preprocessed_text': [processed_text], **emotion_data}
     input_df = pd.DataFrame(data_dict)
 
@@ -404,7 +394,6 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     predicted_index_emo = np.argmax(prediction_proba_emo)
     predicted_label_emo = CONFIG["sentiment_order"][predicted_index_emo]
 
-    # --- DataFrames for Plotting ---
     df_proba = pd.DataFrame({'Sentiment': CONFIG["sentiment_order"], 'Probability': prediction_proba[0] * 100})
     df_proba = df_proba.set_index('Sentiment').reindex(CONFIG["sentiment_order"]).reset_index()
 
@@ -416,7 +405,6 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     df_scores['Score'] = df_scores['Score'] * 100
     top_emotion = df_scores.loc[df_scores['Score'].idxmax()]['Emotion']
 
-    # --- Interpretation ---
     confidence = np.max(prediction_proba)
     confidence_emo = np.max(prediction_proba_emo)
     is_uncertain1 = np.isclose(confidence, 1/3, atol=0.05)
@@ -501,7 +489,6 @@ def set_video_background():
 # =========================================================
 conn = get_conn()
 
-# Visitor count (once per session)
 increment_visitor_count_once_per_session(conn)
 visitor_count = get_visitor_count(conn)
 
@@ -522,14 +509,11 @@ st.markdown("""
     }
     </style>
     <p class="main-title">Sentiment Classification with Emotion Features</p>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# Show visitor count (always)
 st.markdown(f"**👥 Visitors:** `{visitor_count}`")
 
-# -----------------------------
-# Username Gate (no login)
-# -----------------------------
+# Username gate
 if not st.session_state.username.strip():
     st.markdown("## 👋 Welcome")
     st.markdown("Before using the app, please enter your name (this will be shown in shared history).")
@@ -544,17 +528,15 @@ if not st.session_state.username.strip():
 
     st.stop()
 
-# Load models after gate (saves compute for drive-by visitors)
 models = load_all_models()
 emotion_classifier = load_emotion_model()
-
-# NEW: Groq client once
 groq_client = get_groq_client()
 
-# Sidebar options
 with st.sidebar:
     st.markdown("### ⚙️ Options")
     st.session_state.llm_debug = st.toggle("Show LLM raw output (debug)", value=st.session_state.llm_debug)
+    st.caption("Groq models will try in order:")
+    st.code("\n".join(CONFIG["groq_models_try_order"]), language="text")
 
 if models and emotion_classifier:
     st.markdown("""
@@ -573,7 +555,6 @@ if models and emotion_classifier:
         </script>
     """, unsafe_allow_html=True)
 
-    # --- FEATURE: Demo Selector ---
     def update_text_area():
         selected_example = st.session_state.example_selector
         if selected_example and demo_options[selected_example]:
@@ -593,8 +574,6 @@ if models and emotion_classifier:
         submitted = st.form_submit_button("Predict Sentiment")
 
     if submitted and user_text.strip():
-
-        # --- FEATURE: Language Detection ---
         try:
             detected_lang = detect(user_text)
             if detected_lang != 'en':
@@ -605,7 +584,6 @@ if models and emotion_classifier:
         with st.spinner("Analyzing text..."):
             results = analyze_sentiment(user_text, models, emotion_classifier)
 
-        # --- Store Session History (local, current user session only) ---
         st.session_state.history.insert(0, {
             "text": user_text,
             "model1_pred": results["model1"]["prediction"],
@@ -613,7 +591,6 @@ if models and emotion_classifier:
             "top_emotion": results["emotion"]["top"]
         })
 
-        # --- Store Shared History (visible to everyone) ---
         add_history_entry(conn, {
             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "username": st.session_state.username,
@@ -625,7 +602,6 @@ if models and emotion_classifier:
 
         st.divider()
 
-        # --- Preprocessed Text Debugger ---
         with st.expander("Show Preprocessed Text (for XGBoost models)"):
             st.markdown("**Original Text:**")
             st.info(user_text)
@@ -635,23 +611,13 @@ if models and emotion_classifier:
             else:
                 st.warning("Text was empty after preprocessing.")
 
-        # =========================================================
-        # NEW: Online LLM Review Audit (Groq)
-        # =========================================================
+        # ============================
+        # LLM Review Audit (Groq)
+        # ============================
         st.markdown("### 🧠 LLM Review Audit (Online - Groq)")
 
-        if groq_client is None:
-            st.warning("Groq not configured. Add GROQ_API_KEY to Streamlit secrets (or env var).")
-            o = {
-                "review_in_english": "Unclear",
-                "is_slang": "Unclear",
-                "electronic_product_review": "Unclear",
-                "understandable": "Unclear",
-                "_raw": "Missing GROQ_API_KEY"
-            }
-        else:
-            with st.spinner("LLM is checking the review..."):
-                o = groq_review_audit(groq_client, user_text)
+        with st.spinner("LLM is checking the review..."):
+            o = groq_review_audit(groq_client, user_text)
 
         st.markdown(
             f"""
@@ -668,7 +634,6 @@ Review is understandable? **{o.get('understandable','Unclear')}**
 
         st.divider()
 
-        # --- Results Columns ---
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("#### Model 1: Textual Features Only")
@@ -711,13 +676,9 @@ Review is understandable? **{o.get('understandable','Unclear')}**
     elif submitted:
         st.warning("Please enter some text to analyze.")
 
-    # =========================================================
-    # 12) Shared History Section (Visible to everyone)
-    # =========================================================
     st.divider()
     st.markdown("## Analysis History (Shared)")
 
-    # Secret number box + clear button (no login)
     st.markdown("### 🧹 Clear History (Secret Number)")
     secret_input = st.text_input(
         "Enter secret number to delete shared history:",
@@ -756,7 +717,6 @@ Review is understandable? **{o.get('understandable','Unclear')}**
 else:
     st.error("Application could not start. Please check the model files and internet connection.")
 
-# --- Footer ---
 st.markdown("""
     <style>
         .footer {
