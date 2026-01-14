@@ -19,6 +19,7 @@ from langdetect import detect, LangDetectException
 # ===========================
 from groq import Groq
 import json
+import hashlib
 
 # =========================================================
 # 0) CONFIG: You only need to change this secret number
@@ -67,11 +68,7 @@ CONFIG = {
         'neutral': '#a1a1aa'
     },
 
-    # =====================================================
-    # Groq models (UPDATED: llama3-8b-8192 is decommissioned)
-    # Recommended replacement: llama-3.1-8b-instant
-    # Optional fallback: llama-3.3-70b-versatile
-    # =====================================================
+    # ✅ Updated Groq models (try order + fallback)
     "groq_models_try_order": [
         "llama-3.1-8b-instant",
         "llama-3.3-70b-versatile"
@@ -120,7 +117,7 @@ if "llm_debug" not in st.session_state:
     st.session_state.llm_debug = False
 
 # =========================================================
-# 6) Persistent Storage: SQLite (History + Visitor Count)
+# 6) Persistent Storage: SQLite (History + Visitor Count + LLM Cache)
 # =========================================================
 DB_PATH = os.path.join(APP_DIR, "app_storage.db")
 
@@ -129,6 +126,7 @@ def get_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     cur = conn.cursor()
 
+    # Shared history (visible to everyone)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,6 +139,7 @@ def get_conn():
         )
     """)
 
+    # Counters (visitor count)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS counters (
             key TEXT PRIMARY KEY,
@@ -148,6 +147,17 @@ def get_conn():
         )
     """)
 
+    # ✅ NEW: Cache table for LLM outputs (avoid repeated calls)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS llm_cache (
+            text_hash TEXT PRIMARY KEY,
+            audit_json TEXT,
+            sentiment_json TEXT,
+            ts TEXT NOT NULL
+        )
+    """)
+
+    # Initialize visitor counter if not exists
     cur.execute("INSERT OR IGNORE INTO counters (key, value) VALUES (?, ?)", ("visitors", 0))
     conn.commit()
     return conn
@@ -206,6 +216,39 @@ def clear_shared_history(conn):
     cur.execute("DELETE FROM history")
     conn.commit()
 
+# ✅ LLM cache helpers
+def _hash_text(text: str) -> str:
+    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+
+def read_llm_cache(conn, text_hash: str):
+    cur = conn.cursor()
+    cur.execute("SELECT audit_json, sentiment_json FROM llm_cache WHERE text_hash = ?", (text_hash,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    audit_json, sentiment_json = row
+    return {
+        "audit": json.loads(audit_json) if audit_json else None,
+        "sentiment": json.loads(sentiment_json) if sentiment_json else None
+    }
+
+def write_llm_cache(conn, text_hash: str, audit_obj: dict = None, sentiment_obj: dict = None):
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO llm_cache (text_hash, audit_json, sentiment_json, ts)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(text_hash) DO UPDATE SET
+            audit_json = COALESCE(excluded.audit_json, llm_cache.audit_json),
+            sentiment_json = COALESCE(excluded.sentiment_json, llm_cache.sentiment_json),
+            ts = excluded.ts
+    """, (
+        text_hash,
+        json.dumps(audit_obj) if audit_obj else None,
+        json.dumps(sentiment_obj) if sentiment_obj else None,
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ))
+    conn.commit()
+
 # =========================================================
 # 7) Asset Loading
 # =========================================================
@@ -232,7 +275,7 @@ def load_emotion_model():
         return None
 
 # =========================================================
-# 7.5) Groq client + JSON parsing + audit function
+# 7.5) Groq client + JSON parsing + LLM functions
 # =========================================================
 @st.cache_resource
 def get_groq_client():
@@ -267,6 +310,27 @@ def _safe_parse_json(text: str):
             return None
     return None
 
+def _groq_call_json(client, prompt: str):
+    """
+    Tries models in order and returns:
+    { "data": dict_or_None, "raw": raw_text, "model": model_used, "error": err_or_None }
+    """
+    last_err = None
+    for model_name in CONFIG["groq_models_try_order"]:
+        try:
+            completion = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=CONFIG["groq_temperature"],
+            )
+            raw = (completion.choices[0].message.content or "").strip()
+            data = _safe_parse_json(raw)
+            return {"data": data, "raw": raw, "model": model_name, "error": None}
+        except Exception as e:
+            last_err = f"{model_name}: {e}"
+            continue
+    return {"data": None, "raw": "", "model": None, "error": last_err}
+
 def groq_review_audit(client, review_text: str):
     if client is None:
         return {
@@ -274,7 +338,8 @@ def groq_review_audit(client, review_text: str):
             "is_slang": "Unclear",
             "electronic_product_review": "Unclear",
             "understandable": "Unclear",
-            "_raw": "Groq client not configured (missing GROQ_API_KEY)."
+            "_raw": "Groq client not configured (missing GROQ_API_KEY).",
+            "_model": None
         }
 
     prompt = f"""
@@ -304,47 +369,99 @@ Review:
 \"\"\"{review_text}\"\"\"
 """.strip()
 
-    last_err = None
+    res = _groq_call_json(client, prompt)
+    data = res["data"]
 
-    # ✅ Try multiple models (avoids future deprecation breakage)
-    for model_name in CONFIG["groq_models_try_order"]:
-        try:
-            completion = client.chat.completions.create(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=CONFIG["groq_temperature"],
-            )
-
-            raw = (completion.choices[0].message.content or "").strip()
-            data = _safe_parse_json(raw)
-
-            if not isinstance(data, dict):
-                return {
-                    "review_in_english": "Unclear",
-                    "is_slang": "Unclear",
-                    "electronic_product_review": "Unclear",
-                    "understandable": "Unclear",
-                    "_raw": raw
-                }
-
-            return {
-                "review_in_english": data.get("review_in_english", "Unclear"),
-                "is_slang": data.get("is_slang", "Unclear"),
-                "electronic_product_review": data.get("electronic_product_review", "Unclear"),
-                "understandable": data.get("understandable", "Unclear"),
-                "_raw": raw
-            }
-
-        except Exception as e:
-            last_err = f"{model_name}: {e}"
-            continue
+    if not isinstance(data, dict):
+        return {
+            "review_in_english": "Unclear",
+            "is_slang": "Unclear",
+            "electronic_product_review": "Unclear",
+            "understandable": "Unclear",
+            "_raw": res["raw"] or f"Groq error: {res['error']}",
+            "_model": res["model"]
+        }
 
     return {
-        "review_in_english": "Unclear",
-        "is_slang": "Unclear",
-        "electronic_product_review": "Unclear",
-        "understandable": "Unclear",
-        "_raw": f"Groq error (all models failed). Last error: {last_err}"
+        "review_in_english": data.get("review_in_english", "Unclear"),
+        "is_slang": data.get("is_slang", "Unclear"),
+        "electronic_product_review": data.get("electronic_product_review", "Unclear"),
+        "understandable": data.get("understandable", "Unclear"),
+        "_raw": res["raw"],
+        "_model": res["model"]
+    }
+
+def groq_sentiment_predict(client, review_text: str):
+    """
+    LLM sentiment prediction (independent from XGBoost models).
+    Returns:
+      - sentiment: Positive | Neutral | Negative | Unclear
+      - confidence: 0..1 (float) or None
+      - reason: short text
+    """
+    if client is None:
+        return {
+            "sentiment": "Unclear",
+            "confidence": None,
+            "reason": "Groq client not configured.",
+            "_raw": "Missing GROQ_API_KEY",
+            "_model": None
+        }
+
+    prompt = f"""
+You are a sentiment classifier for product reviews.
+
+You MUST respond in JSON only.
+NO explanations outside JSON.
+NO markdown.
+
+Return exactly these keys:
+- sentiment   (one of: "Positive", "Neutral", "Negative")
+- confidence  (number between 0 and 1)
+- reason      (max 20 words)
+
+Review:
+\"\"\"{review_text}\"\"\"
+""".strip()
+
+    res = _groq_call_json(client, prompt)
+    data = res["data"]
+
+    if not isinstance(data, dict):
+        return {
+            "sentiment": "Unclear",
+            "confidence": None,
+            "reason": "LLM failed to respond in JSON.",
+            "_raw": res["raw"] or f"Groq error: {res['error']}",
+            "_model": res["model"]
+        }
+
+    sentiment = data.get("sentiment", "Unclear")
+    conf = data.get("confidence", None)
+    reason = data.get("reason", "")
+
+    # Normalize
+    if isinstance(sentiment, str):
+        sentiment = sentiment.strip().capitalize()
+        if sentiment not in ["Positive", "Neutral", "Negative"]:
+            sentiment = "Unclear"
+
+    try:
+        conf = float(conf)
+        if conf < 0 or conf > 1:
+            conf = None
+    except Exception:
+        conf = None
+
+    if not isinstance(reason, str):
+        reason = ""
+
+    return {
+        "sentiment": sentiment,
+        "confidence": conf,
+        "reason": reason.strip(),
+        "_raw": res["raw"],
+        "_model": res["model"]
     }
 
 # =========================================================
@@ -374,11 +491,13 @@ def preprocess_text(text):
 def analyze_sentiment(user_text, models, emotion_classifier):
     processed_text = preprocess_text(user_text)
 
+    # --- Model 1: Without Emotion ---
     pipeline_cond1 = models["without_emotion"]
     prediction_proba = pipeline_cond1.predict_proba([processed_text])
     predicted_index = np.argmax(prediction_proba)
     predicted_label = CONFIG["sentiment_order"][predicted_index]
 
+    # --- Model 2: With Emotion ---
     pipeline_cond2 = models["with_emotion"]
     truncated_text = user_text[:512]
     emotion_scores_raw = emotion_classifier(truncated_text)[0]
@@ -394,6 +513,7 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     predicted_index_emo = np.argmax(prediction_proba_emo)
     predicted_label_emo = CONFIG["sentiment_order"][predicted_index_emo]
 
+    # --- DataFrames for Plotting ---
     df_proba = pd.DataFrame({'Sentiment': CONFIG["sentiment_order"], 'Probability': prediction_proba[0] * 100})
     df_proba = df_proba.set_index('Sentiment').reindex(CONFIG["sentiment_order"]).reset_index()
 
@@ -405,6 +525,7 @@ def analyze_sentiment(user_text, models, emotion_classifier):
     df_scores['Score'] = df_scores['Score'] * 100
     top_emotion = df_scores.loc[df_scores['Score'].idxmax()]['Emotion']
 
+    # --- Interpretation ---
     confidence = np.max(prediction_proba)
     confidence_emo = np.max(prediction_proba_emo)
     is_uncertain1 = np.isclose(confidence, 1/3, atol=0.05)
@@ -535,7 +656,7 @@ groq_client = get_groq_client()
 with st.sidebar:
     st.markdown("### ⚙️ Options")
     st.session_state.llm_debug = st.toggle("Show LLM raw output (debug)", value=st.session_state.llm_debug)
-    st.caption("Groq models will try in order:")
+    st.caption("Groq models try order:")
     st.code("\n".join(CONFIG["groq_models_try_order"]), language="text")
 
 if models and emotion_classifier:
@@ -611,13 +732,22 @@ if models and emotion_classifier:
             else:
                 st.warning("Text was empty after preprocessing.")
 
-        # ============================
-        # LLM Review Audit (Groq)
-        # ============================
-        st.markdown("### 🧠 LLM Review Audit (Online - Groq)")
+        # =========================================================
+        # ✅ LLM CACHE: audit + sentiment
+        # =========================================================
+        text_hash = _hash_text(user_text)
+        cached = read_llm_cache(conn, text_hash)
 
-        with st.spinner("LLM is checking the review..."):
-            o = groq_review_audit(groq_client, user_text)
+        # --- LLM Audit (Groq) ---
+        st.markdown("### 🧠 LLM Review Audit (Online - Groq)")
+        if cached and cached.get("audit"):
+            o = cached["audit"]
+            o["_cached"] = True
+        else:
+            with st.spinner("LLM is checking the review..."):
+                o = groq_review_audit(groq_client, user_text)
+            write_llm_cache(conn, text_hash, audit_obj=o)
+            o["_cached"] = False
 
         st.markdown(
             f"""
@@ -627,13 +757,48 @@ Electronic Product Review? **{o.get('electronic_product_review','Unclear')}**
 Review is understandable? **{o.get('understandable','Unclear')}**
             """.strip()
         )
+        st.caption("✅ Cached result" if o.get("_cached") else "🌐 Live API result")
+
+        # --- LLM Sentiment (Groq) ---
+        st.markdown("### 🤖 LLM Sentiment Prediction (Groq)")
+        if cached and cached.get("sentiment"):
+            s = cached["sentiment"]
+            s["_cached"] = True
+        else:
+            with st.spinner("LLM is predicting sentiment..."):
+                s = groq_sentiment_predict(groq_client, user_text)
+            write_llm_cache(conn, text_hash, sentiment_obj=s)
+            s["_cached"] = False
+
+        # Display nicely
+        llm_sent = s.get("sentiment", "Unclear")
+        llm_conf = s.get("confidence", None)
+        llm_reason = s.get("reason", "")
+
+        if llm_sent == "Positive":
+            st.success(f"**LLM Sentiment:** Positive" + (f"  (Confidence: {llm_conf:.2%})" if isinstance(llm_conf, float) else ""))
+        elif llm_sent == "Negative":
+            st.error(f"**LLM Sentiment:** Negative" + (f"  (Confidence: {llm_conf:.2%})" if isinstance(llm_conf, float) else ""))
+        elif llm_sent == "Neutral":
+            st.info(f"**LLM Sentiment:** Neutral" + (f"  (Confidence: {llm_conf:.2%})" if isinstance(llm_conf, float) else ""))
+        else:
+            st.warning("**LLM Sentiment:** Unclear")
+
+        if llm_reason:
+            st.caption(f"Reason: {llm_reason}")
+
+        st.caption("✅ Cached result" if s.get("_cached") else "🌐 Live API result")
 
         if st.session_state.llm_debug:
-            with st.expander("Show LLM raw output (debug)"):
+            with st.expander("Show LLM raw outputs (debug)"):
+                st.markdown("**Audit raw:**")
                 st.code(o.get("_raw", ""), language="text")
+                st.markdown("**Sentiment raw:**")
+                st.code(s.get("_raw", ""), language="text")
 
         st.divider()
 
+        # --- Results Columns (your original) ---
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("#### Model 1: Textual Features Only")
@@ -676,6 +841,9 @@ Review is understandable? **{o.get('understandable','Unclear')}**
     elif submitted:
         st.warning("Please enter some text to analyze.")
 
+    # =========================================================
+    # 12) Shared History Section (Visible to everyone)
+    # =========================================================
     st.divider()
     st.markdown("## Analysis History (Shared)")
 
@@ -717,6 +885,7 @@ Review is understandable? **{o.get('understandable','Unclear')}**
 else:
     st.error("Application could not start. Please check the model files and internet connection.")
 
+# --- Footer ---
 st.markdown("""
     <style>
         .footer {
