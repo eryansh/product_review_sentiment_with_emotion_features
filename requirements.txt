@@ -11,3 +11,4 @@ imbalanced-learn
 xgboost
 langdetect
 google-genai==0.5.0
+groq
