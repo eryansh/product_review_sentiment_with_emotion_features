@@ -9,6 +9,9 @@ import nltk
 import os
 import sqlite3
 from datetime import datetime
+import json
+import hashlib
+
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
@@ -18,8 +21,6 @@ from langdetect import detect, LangDetectException
 # Groq imports
 # ===========================
 from groq import Groq
-import json
-import hashlib
 
 # =========================================================
 # 0) CONFIG: You only need to change this secret number
@@ -41,6 +42,7 @@ if not os.path.exists(NLTK_DATA_DIR):
 if NLTK_DATA_DIR not in nltk.data.path:
     nltk.data.path.append(NLTK_DATA_DIR)
 
+# These downloads are kept as in your original code
 nltk.download('stopwords', download_dir=NLTK_DATA_DIR)
 nltk.download('punkt', download_dir=NLTK_DATA_DIR)
 nltk.download('wordnet', download_dir=NLTK_DATA_DIR)
@@ -68,7 +70,7 @@ CONFIG = {
         'neutral': '#a1a1aa'
     },
 
-    # ✅ Updated Groq models (try order + fallback)
+    # ✅ Groq models try order (fallback if first fails)
     "groq_models_try_order": [
         "llama-3.1-8b-instant",
         "llama-3.3-70b-versatile"
@@ -107,12 +109,15 @@ if 'history' not in st.session_state:
 if 'user_input' not in st.session_state:
     st.session_state.user_input = "The battery life of this phone is amazing, I'm so happy with my purchase!"
 
+# username gate
 if "username" not in st.session_state:
     st.session_state.username = ""
 
+# visitor count session guard
 if "visitor_counted" not in st.session_state:
     st.session_state.visitor_counted = False
 
+# LLM debug toggle
 if "llm_debug" not in st.session_state:
     st.session_state.llm_debug = False
 
@@ -147,7 +152,7 @@ def get_conn():
         )
     """)
 
-    # ✅ NEW: Cache table for LLM outputs (avoid repeated calls)
+    # LLM cache (avoid repeated calls)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS llm_cache (
             text_hash TEXT PRIMARY KEY,
@@ -216,7 +221,7 @@ def clear_shared_history(conn):
     cur.execute("DELETE FROM history")
     conn.commit()
 
-# ✅ LLM cache helpers
+# -------- LLM cache helpers --------
 def _hash_text(text: str) -> str:
     return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
 
@@ -254,11 +259,13 @@ def write_llm_cache(conn, text_hash: str, audit_obj: dict = None, sentiment_obj:
 # =========================================================
 @st.cache_resource
 def load_all_models():
+    """Loads all joblib model files."""
     try:
-        return {
+        models = {
             "without_emotion": joblib.load(CONFIG["model_paths"]["without_emotion"]["pipeline"]),
             "with_emotion": joblib.load(CONFIG["model_paths"]["with_emotion"]["pipeline"])
         }
+        return models
     except FileNotFoundError as e:
         st.error(f"Error: A model file was not found. Please ensure all .joblib files are present. Details: {e}")
         return None
@@ -268,6 +275,7 @@ def load_all_models():
 
 @st.cache_resource
 def load_emotion_model():
+    """Loads the emotion detection model from Hugging Face."""
     try:
         return pipeline("text-classification", model=CONFIG["hugging_face_model"], return_all_scores=True)
     except Exception as e:
@@ -315,6 +323,9 @@ def _groq_call_json(client, prompt: str):
     Tries models in order and returns:
     { "data": dict_or_None, "raw": raw_text, "model": model_used, "error": err_or_None }
     """
+    if client is None:
+        return {"data": None, "raw": "", "model": None, "error": "Missing GROQ_API_KEY"}
+
     last_err = None
     for model_name in CONFIG["groq_models_try_order"]:
         try:
@@ -329,41 +340,93 @@ def _groq_call_json(client, prompt: str):
         except Exception as e:
             last_err = f"{model_name}: {e}"
             continue
+
     return {"data": None, "raw": "", "model": None, "error": last_err}
 
 def groq_review_audit(client, review_text: str):
+    """
+    Upgraded audit with:
+    - languages detected (can be multiple)
+    - slang examples + count + justification
+    - electronic vs general vs other domain + guesses + justification
+    - understandable + justification
+    """
     if client is None:
         return {
             "review_in_english": "Unclear",
+            "languages_detected": [],
+            "language_note": "Groq client not configured.",
             "is_slang": "Unclear",
+            "slang_terms_found": [],
+            "slang_count": 0,
+            "slang_justification": "Groq client not configured.",
             "electronic_product_review": "Unclear",
+            "electronic_guess": "",
+            "other_domain_guess": "",
+            "product_justification": "Groq client not configured.",
             "understandable": "Unclear",
-            "_raw": "Groq client not configured (missing GROQ_API_KEY).",
+            "understandable_justification": "Groq client not configured.",
+            "_raw": "Missing GROQ_API_KEY",
             "_model": None
         }
 
     prompt = f"""
-You are a strict classifier.
+You are a strict review auditor.
 
 You MUST respond in JSON only.
-NO explanations.
 NO markdown.
 NO extra text.
+NO code fences.
 
-Return exactly these keys:
+Return EXACTLY these keys:
 - review_in_english
+- languages_detected
+- language_note
 - is_slang
+- slang_terms_found
+- slang_count
+- slang_justification
 - electronic_product_review
+- electronic_guess
+- other_domain_guess
+- product_justification
 - understandable
+- understandable_justification
 
-Allowed values:
-- review_in_english: "Yes" | "No" | "Unclear"
-- is_slang: "Yes" | "No" | "Some"
-- electronic_product_review:
-    - "General"
-    - "Yes"
-    - "Specific: <device/type>"
-- understandable: "Yes" | "No" | "Partly"
+Rules:
+1) review_in_english must be one of: "Yes", "No", "Mixed", "Unclear"
+2) languages_detected is a list of language names (e.g., ["English"], or ["English","Malay"]).
+   - If multiple languages are used, include all major ones you can detect (max 3).
+3) language_note:
+   - If any non-English exists, include warning:
+     "Non-English text may reduce the accuracy of the sentiment models."
+   - Otherwise, brief note like "Appears fully English."
+4) is_slang must be one of: "Yes", "No", "Some", "Unclear"
+5) slang_terms_found:
+   - list the slang words/phrases you saw in the review (lowercase).
+   - If none, return [].
+6) slang_count:
+   - integer count of unique slang terms found (length of slang_terms_found).
+7) slang_justification:
+   - short reason (max 25 words), mention why those terms are slang.
+8) electronic_product_review must be one of:
+   - "Yes"       (clearly electronic product review)
+   - "General"   (no specific product OR doesn't sound like any product review)
+   - "OtherDomain" (sounds like a review but for a non-electronic domain)
+   - "Unclear"
+9) If electronic_product_review == "Yes":
+   - electronic_guess: "This may refer to product like ____" (be specific)
+   - other_domain_guess: ""
+10) If electronic_product_review == "OtherDomain":
+   - other_domain_guess: "Domain: <domain>, Possible product/service: <thing>"
+   - electronic_guess: ""
+11) If electronic_product_review == "General":
+   - both guesses can be "" (or explain very briefly in product_justification).
+12) product_justification:
+   - short reason (max 25 words) explaining why "Yes"/"General"/"OtherDomain"
+13) understandable must be one of: "Yes", "Partly", "No", "Unclear"
+14) understandable_justification:
+   - short reason (max 25 words). If sarcasm/fragmented/ambiguous, say so.
 
 Review:
 \"\"\"{review_text}\"\"\"
@@ -375,18 +438,49 @@ Review:
     if not isinstance(data, dict):
         return {
             "review_in_english": "Unclear",
+            "languages_detected": [],
+            "language_note": "LLM failed to output valid JSON.",
             "is_slang": "Unclear",
+            "slang_terms_found": [],
+            "slang_count": 0,
+            "slang_justification": "LLM failed to output valid JSON.",
             "electronic_product_review": "Unclear",
+            "electronic_guess": "",
+            "other_domain_guess": "",
+            "product_justification": "LLM failed to output valid JSON.",
             "understandable": "Unclear",
+            "understandable_justification": "LLM failed to output valid JSON.",
             "_raw": res["raw"] or f"Groq error: {res['error']}",
             "_model": res["model"]
         }
 
+    languages = data.get("languages_detected", [])
+    if not isinstance(languages, list):
+        languages = []
+
+    slang_terms = data.get("slang_terms_found", [])
+    if not isinstance(slang_terms, list):
+        slang_terms = []
+
+    try:
+        slang_count = int(data.get("slang_count", len(slang_terms)))
+    except Exception:
+        slang_count = len(slang_terms)
+
     return {
         "review_in_english": data.get("review_in_english", "Unclear"),
+        "languages_detected": languages[:3],
+        "language_note": data.get("language_note", ""),
         "is_slang": data.get("is_slang", "Unclear"),
+        "slang_terms_found": [str(x).strip().lower() for x in slang_terms if str(x).strip()][:15],
+        "slang_count": slang_count,
+        "slang_justification": data.get("slang_justification", ""),
         "electronic_product_review": data.get("electronic_product_review", "Unclear"),
+        "electronic_guess": data.get("electronic_guess", ""),
+        "other_domain_guess": data.get("other_domain_guess", ""),
+        "product_justification": data.get("product_justification", ""),
         "understandable": data.get("understandable", "Unclear"),
+        "understandable_justification": data.get("understandable_justification", ""),
         "_raw": res["raw"],
         "_model": res["model"]
     }
@@ -440,11 +534,12 @@ Review:
     conf = data.get("confidence", None)
     reason = data.get("reason", "")
 
-    # Normalize
     if isinstance(sentiment, str):
         sentiment = sentiment.strip().capitalize()
         if sentiment not in ["Positive", "Neutral", "Negative"]:
             sentiment = "Unclear"
+    else:
+        sentiment = "Unclear"
 
     try:
         conf = float(conf)
@@ -610,6 +705,7 @@ def set_video_background():
 # =========================================================
 conn = get_conn()
 
+# Visitor count (once per session)
 increment_visitor_count_once_per_session(conn)
 visitor_count = get_visitor_count(conn)
 
@@ -630,11 +726,14 @@ st.markdown("""
     }
     </style>
     <p class="main-title">Sentiment Classification with Emotion Features</p>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
+# Show visitor count (always)
 st.markdown(f"**👥 Visitors:** `{visitor_count}`")
 
-# Username gate
+# -----------------------------
+# Username Gate (no login)
+# -----------------------------
 if not st.session_state.username.strip():
     st.markdown("## 👋 Welcome")
     st.markdown("Before using the app, please enter your name (this will be shown in shared history).")
@@ -649,10 +748,12 @@ if not st.session_state.username.strip():
 
     st.stop()
 
+# Load models after gate
 models = load_all_models()
 emotion_classifier = load_emotion_model()
 groq_client = get_groq_client()
 
+# Sidebar options
 with st.sidebar:
     st.markdown("### ⚙️ Options")
     st.session_state.llm_debug = st.toggle("Show LLM raw output (debug)", value=st.session_state.llm_debug)
@@ -676,6 +777,7 @@ if models and emotion_classifier:
         </script>
     """, unsafe_allow_html=True)
 
+    # --- Demo Selector ---
     def update_text_area():
         selected_example = st.session_state.example_selector
         if selected_example and demo_options[selected_example]:
@@ -695,16 +797,22 @@ if models and emotion_classifier:
         submitted = st.form_submit_button("Predict Sentiment")
 
     if submitted and user_text.strip():
+
+        # --- Language Detection (local quick warning) ---
         try:
             detected_lang = detect(user_text)
             if detected_lang != 'en':
-                st.warning(f"⚠️ **Warning:** The detected language is **'{detected_lang}'**. This model is trained on English data and may produce inaccurate results for non-English reviews.")
+                st.warning(
+                    f"⚠️ **Warning:** The detected language is **'{detected_lang}'**. "
+                    f"This model is trained on English data and may produce inaccurate results for non-English reviews."
+                )
         except LangDetectException:
             st.warning("⚠️ **Warning:** Could not detect the language. Results may be inaccurate.")
 
         with st.spinner("Analyzing text..."):
             results = analyze_sentiment(user_text, models, emotion_classifier)
 
+        # --- Store Session History (local, current user session only) ---
         st.session_state.history.insert(0, {
             "text": user_text,
             "model1_pred": results["model1"]["prediction"],
@@ -712,6 +820,7 @@ if models and emotion_classifier:
             "top_emotion": results["emotion"]["top"]
         })
 
+        # --- Store Shared History (visible to everyone) ---
         add_history_entry(conn, {
             "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "username": st.session_state.username,
@@ -723,6 +832,7 @@ if models and emotion_classifier:
 
         st.divider()
 
+        # --- Preprocessed Text Debugger ---
         with st.expander("Show Preprocessed Text (for XGBoost models)"):
             st.markdown("**Original Text:**")
             st.info(user_text)
@@ -733,13 +843,16 @@ if models and emotion_classifier:
                 st.warning("Text was empty after preprocessing.")
 
         # =========================================================
-        # ✅ LLM CACHE: audit + sentiment
+        # LLM CACHE (audit + sentiment)
         # =========================================================
         text_hash = _hash_text(user_text)
         cached = read_llm_cache(conn, text_hash)
 
-        # --- LLM Audit (Groq) ---
+        # =========================================================
+        # LLM Review Audit (Groq) - upgraded outputs
+        # =========================================================
         st.markdown("### 🧠 LLM Review Audit (Online - Groq)")
+
         if cached and cached.get("audit"):
             o = cached["audit"]
             o["_cached"] = True
@@ -749,18 +862,55 @@ if models and emotion_classifier:
             write_llm_cache(conn, text_hash, audit_obj=o)
             o["_cached"] = False
 
+        langs = o.get("languages_detected", [])
+        langs_text = ", ".join(langs) if langs else "Unclear"
+
+        # Language / English
         st.markdown(
             f"""
-Review in English? **{o.get('review_in_english','Unclear')}**  
-Is this Slang? **{o.get('is_slang','Unclear')}**  
-Electronic Product Review? **{o.get('electronic_product_review','Unclear')}**  
-Review is understandable? **{o.get('understandable','Unclear')}**
+**Review in English?** {o.get('review_in_english','Unclear')}  
+**Languages detected:** {langs_text}  
+**Note:** {o.get('language_note','')}
             """.strip()
         )
+
+        # Slang details
+        slang_terms = o.get("slang_terms_found", [])
+        slang_list = ", ".join(slang_terms) if slang_terms else "(none)"
+        st.markdown(
+            f"""
+**Is this Slang?** {o.get('is_slang','Unclear')}  
+**Slang words/phrases found:** {slang_list}  
+**Number of slang terms:** {o.get('slang_count', 0)}  
+**Justification:** {o.get('slang_justification','')}
+            """.strip()
+        )
+
+        # Electronic / domain details
+        st.markdown(
+            f"""
+**Electronic Product Review?** {o.get('electronic_product_review','Unclear')}  
+**Electronic guess:** {o.get('electronic_guess','')}  
+**Other domain guess:** {o.get('other_domain_guess','')}  
+**Justification:** {o.get('product_justification','')}
+            """.strip()
+        )
+
+        # Understandable details
+        st.markdown(
+            f"""
+**Review is understandable?** {o.get('understandable','Unclear')}  
+**Justification:** {o.get('understandable_justification','')}
+            """.strip()
+        )
+
         st.caption("✅ Cached result" if o.get("_cached") else "🌐 Live API result")
 
-        # --- LLM Sentiment (Groq) ---
+        # =========================================================
+        # LLM Sentiment Prediction (Groq)
+        # =========================================================
         st.markdown("### 🤖 LLM Sentiment Prediction (Groq)")
+
         if cached and cached.get("sentiment"):
             s = cached["sentiment"]
             s["_cached"] = True
@@ -770,7 +920,6 @@ Review is understandable? **{o.get('understandable','Unclear')}**
             write_llm_cache(conn, text_hash, sentiment_obj=s)
             s["_cached"] = False
 
-        # Display nicely
         llm_sent = s.get("sentiment", "Unclear")
         llm_conf = s.get("confidence", None)
         llm_reason = s.get("reason", "")
@@ -789,16 +938,19 @@ Review is understandable? **{o.get('understandable','Unclear')}**
 
         st.caption("✅ Cached result" if s.get("_cached") else "🌐 Live API result")
 
+        # Debug raw outputs
         if st.session_state.llm_debug:
             with st.expander("Show LLM raw outputs (debug)"):
                 st.markdown("**Audit raw:**")
+                st.caption(f"Model used: {o.get('_model')}")
                 st.code(o.get("_raw", ""), language="text")
                 st.markdown("**Sentiment raw:**")
+                st.caption(f"Model used: {s.get('_model')}")
                 st.code(s.get("_raw", ""), language="text")
 
         st.divider()
 
-        # --- Results Columns (your original) ---
+        # --- Results Columns ---
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("#### Model 1: Textual Features Only")
@@ -847,6 +999,7 @@ Review is understandable? **{o.get('understandable','Unclear')}**
     st.divider()
     st.markdown("## Analysis History (Shared)")
 
+    # Secret number box + clear button (no login)
     st.markdown("### 🧹 Clear History (Secret Number)")
     secret_input = st.text_input(
         "Enter secret number to delete shared history:",
